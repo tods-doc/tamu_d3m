@@ -76,7 +76,7 @@ setup(
         'docker[tls]==2.7',
     ],
     entry_points=read_entry_points(),
-    url='https://gitlab.com/datadrivendiscovery/d3m',
+    url='https://github.com/tods-doc/tamu_d3m',
     long_description=read_readme(),
     long_description_content_type='text/markdown',
     license='Apache-2.0',
