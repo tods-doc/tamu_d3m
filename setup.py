@@ -3,7 +3,7 @@ import os.path
 import sys
 from setuptools import setup, find_packages
 
-PACKAGE_NAME = 'd3m'
+PACKAGE_NAME = 'tamu_d3m'
 MINIMUM_PYTHON_VERSION = 3, 6
 
 
