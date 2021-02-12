@@ -2375,7 +2375,7 @@
           {"enum": ["SYMBOLIC_REGRESSION"], "description": "https://en.wikipedia.org/wiki/Symbolic_regression"},
           {"enum": ["T_DISTRIBUTED_STOCHASTIC_NEIGHBOR_EMBEDDING"], "description": "https://en.wikipedia.org/wiki/T-distributed_stochastic_neighbor_embedding"},
 		  {"enum": ["TELEMANOM"]},
-		  {"enum": ["TODS_PRIMITIVE"],
+		  {"enum": ["TODS_PRIMITIVE"]},
           {"enum": ["TFIDF"], "description": "https://en.wikipedia.org/wiki/Tf-idf"},
           {"enum": ["TIKHONOV_REGULARIZATION"], "description": "https://en.wikipedia.org/wiki/Tikhonov_regularization"},
           {"enum": ["TIME_DELAY_NEURAL_NETWORK"], "description": "https://en.wikipedia.org/wiki/Time_delay_neural_network"},
