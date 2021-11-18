@@ -1,0 +1,31 @@
+import os.path
+
+SCORING_PIPELINE_ID = 'f596cd77-25f8-4d4c-a350-bb30ab1e58f6'
+SCORING_PIPELINE_PATH = os.path.join(
+    os.path.dirname(__file__), SCORING_PIPELINE_ID + '.yml'
+)
+assert os.path.exists(SCORING_PIPELINE_PATH)
+
+NO_SPLIT_TABULAR_SPLIT_PIPELINE_ID = '79ce71bd-db96-494b-a455-14f2e2ac5040'
+NO_SPLIT_TABULAR_SPLIT_PIPELINE_PATH = os.path.join(
+    os.path.dirname(__file__), NO_SPLIT_TABULAR_SPLIT_PIPELINE_ID + '.yml'
+)
+assert os.path.exists(NO_SPLIT_TABULAR_SPLIT_PIPELINE_PATH)
+
+FIXED_SPLIT_TABULAR_SPLIT_PIPELINE_ID = '9c18472e-fff7-4129-93f6-1ab996e82adb'
+FIXED_SPLIT_TABULAR_SPLIT_PIPELINE_PATH = os.path.join(
+    os.path.dirname(__file__), FIXED_SPLIT_TABULAR_SPLIT_PIPELINE_ID + '.yml'
+)
+assert os.path.exists(FIXED_SPLIT_TABULAR_SPLIT_PIPELINE_PATH)
+
+TRAIN_TEST_TABULAR_SPLIT_PIPELINE_ID = '3c11d171-e2ad-4d26-a034-04f3b062306c'
+TRAIN_TEST_TABULAR_SPLIT_PIPELINE_PATH = os.path.join(
+    os.path.dirname(__file__), TRAIN_TEST_TABULAR_SPLIT_PIPELINE_ID + '.yml'
+)
+assert os.path.exists(TRAIN_TEST_TABULAR_SPLIT_PIPELINE_PATH)
+
+K_FOLD_TABULAR_SPLIT_PIPELINE_ID = 'c8ed65df-aa68-4ee0-bbb5-c5f76a40bcf8'
+K_FOLD_TABULAR_SPLIT_PIPELINE_PATH = os.path.join(
+    os.path.dirname(__file__), K_FOLD_TABULAR_SPLIT_PIPELINE_ID + '.yml'
+)
+assert os.path.exists(K_FOLD_TABULAR_SPLIT_PIPELINE_PATH)

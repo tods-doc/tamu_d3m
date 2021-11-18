@@ -2,9 +2,9 @@ import abc
 import typing
 import weakref
 
-import frozendict  # type: ignore
-import numpy  # type: ignore
-import pandas  # type: ignore
+import frozendict
+import numpy
+import pandas
 
 from d3m import container, exceptions, types
 from d3m.base import utils as base_utils
@@ -61,7 +61,7 @@ class FileReaderPrimitiveBase(transformer.TransformerPrimitiveBase[FileReaderInp
     """
 
     _supported_media_types: typing.Sequence[str] = ()
-    _file_structural_type: type = None
+    _file_structural_type: type
     # If any of these semantic types already exists on a column, then nothing is done.
     # If all are missing, the first one is set.
     _file_semantic_types: typing.Sequence[str] = ()
@@ -120,10 +120,7 @@ class FileReaderPrimitiveBase(transformer.TransformerPrimitiveBase[FileReaderInp
         pass
 
     def _read_filename(self, column_index: int, metadata: frozendict.FrozenOrderedDict, filename: str) -> typing.Any:
-        # TODO: Support handling multiple "location_base_uris".
-        # "location_base_uris" should be made so that we can just concat with the filename
-        # ("location_base_uris" end with "/").
-        fileuri = metadata['location_base_uris'][0] + filename
+        fileuri = base_utils.construct_file_uri(metadata['location_base_uris'], filename)
 
         # We do not use the structure where we check if the key exists in the cache and if not set it and then
         # return from the cache outside if clause because we are not sure garbage collection might not remove it
@@ -284,10 +281,10 @@ class TabularSplitPrimitiveBase(DatasetSplitPrimitiveBase[TabularSplitPrimitiveP
         # We need random seed multiple times. So we create our own random state we use everywhere.
         self._random_state = numpy.random.RandomState(self.random_seed)
         self._fitted: bool = False
-        self._dataset: container.Dataset = None
-        self._main_resource_id: str = None
-        self._splits: typing.List[typing.Tuple[numpy.ndarray, numpy.ndarray]] = None
-        self._graph: typing.Dict[str, typing.List[typing.Tuple[str, bool, int, int, typing.Dict]]] = None
+        self._dataset: typing.Optional[container.Dataset] = None
+        self._main_resource_id: typing.Optional[str] = None
+        self._splits: typing.Optional[typing.List[typing.Tuple[numpy.ndarray, numpy.ndarray]]] = None
+        self._graph: typing.Optional[typing.Dict[str, typing.List[typing.Tuple[str, bool, int, int, typing.Dict]]]] = None
 
     def produce(self, *, inputs: DatasetSplitInputs, timeout: float = None, iterations: int = None) -> base.CallResult[DatasetSplitOutputs]:
         return self._produce(inputs, True)
@@ -307,7 +304,7 @@ class TabularSplitPrimitiveBase(DatasetSplitPrimitiveBase[TabularSplitPrimitiveP
         This function computes everything in advance, including generating the relation graph.
         """
 
-        if self._dataset is None:
+        if self._main_resource_id is None or self._dataset is None:
             raise exceptions.InvalidStateError('Missing training data.')
 
         if self._fitted:
@@ -328,7 +325,7 @@ class TabularSplitPrimitiveBase(DatasetSplitPrimitiveBase[TabularSplitPrimitiveP
 
     def fit_multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: DatasetSplitInputs,  # type: ignore
                           dataset: container.Dataset, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
-        return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, dataset=dataset)  # type: ignore
+        return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, dataset=dataset)
 
     @abc.abstractmethod
     def _get_splits(self, attributes: pandas.DataFrame, targets: pandas.DataFrame, dataset: container.Dataset, main_resource_id: str) -> typing.List[typing.Tuple[numpy.ndarray, numpy.ndarray]]:
@@ -372,7 +369,7 @@ class TabularSplitPrimitiveBase(DatasetSplitPrimitiveBase[TabularSplitPrimitiveP
         Returns a list of Datasets.
         """
 
-        if not self._fitted:
+        if not self._fitted or self._splits is None or self._dataset is None or self._main_resource_id is None or self._graph is None:
             raise exceptions.PrimitiveNotFittedError("Primitive not fitted.")
 
         output_datasets = container.List(generate_metadata=True)

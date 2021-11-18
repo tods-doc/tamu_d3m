@@ -13,12 +13,12 @@ import re
 import types
 import typing
 
-import frozendict  # type: ignore
-import numpy  # type: ignore
-import typing_inspect  # type: ignore
-from pytypes import type_util  # type: ignore
-from scipy import special as scipy_special  # type: ignore
-from sklearn.utils import validation as sklearn_validation  # type: ignore
+import frozendict
+import numpy
+import typing_inspect
+from pytypes import type_util
+from scipy import special as scipy_special
+from sklearn.utils import validation as sklearn_validation
 
 from . import base
 from d3m import deprecate, exceptions, utils
@@ -41,7 +41,9 @@ HYPERPARAMETER_NAME_REGEX = re.compile(r'^[A-Za-z][A-Za-z_0-9]*$')
 
 
 def _get_structural_type_argument(obj: typing.Any, type_var: typing.Any) -> type:
-    cls = typing_inspect.get_generic_type(obj)
+    # We use pytypes here instead of typing_inspect.get_generic_type.
+    # See: https://github.com/python/typing/issues/658
+    cls = type_util.get_Generic_type(obj)
 
     return utils.get_type_arguments(cls)[type_var]
 
@@ -94,7 +96,7 @@ def _recreate_hyperparams_class(base_cls: 'typing.Type[Hyperparams]', define_arg
 
 
 def _encode_generic_type(structural_type: type) -> typing.Union[type, typing.Dict]:
-    args = typing_inspect.get_last_args(structural_type)
+    args = typing_inspect.get_args(structural_type, evaluate=True)
 
     if not args:
         return structural_type
@@ -112,7 +114,7 @@ def _decode_generic_type(description: typing.Union[type, typing.Dict]) -> type:
     return description['origin'][tuple(_decode_generic_type(arg) for arg in description['args'])]
 
 
-class HyperparameterMeta(utils.AbstractMetaclass, typing.GenericMeta):
+class HyperparameterMeta(utils.GenericMetaclass):
     pass
 
 
@@ -149,25 +151,18 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
     value to the primitive. The latter approach allows pipeline to describe how is the primitive
     fitted and use data from the pipeline itself for fitting, before the primitive is passed on
     as a hyper-parameter value to another primitive.
-
-    Attributes
-    ----------
-    name:
-        A name of this hyper-parameter in the configuration of all hyper-parameters.
-    structural_type:
-        A Python type of this hyper-parameter. All values of the hyper-parameter, including the default value,
-        should be of this type.
-    semantic_types:
-        A list of URIs providing semantic meaning of the hyper-parameter. This can help express how
-        the hyper-parameter is being used, e.g., as a learning rate or as kernel parameter.
-    description:
-        An optional natural language description of the hyper-parameter.
     """
 
-    name: str
+    #: A name of this hyper-parameter in the configuration of all hyper-parameters.
+    name: typing.Optional[str]
+    #: A Python type of this hyper-parameter. All values of the hyper-parameter, including the default value,
+    #: should be of this type.
     structural_type: typing.Type
+    #: A list of URIs providing semantic meaning of the hyper-parameter. This can help express how
+    #: the hyper-parameter is being used, e.g., as a learning rate or as kernel parameter.
     semantic_types: typing.Sequence[str]
-    description: str
+    #: An optional natural language description of the hyper-parameter.
+    description: typing.Optional[str]
 
     def __init__(self, default: T, *, semantic_types: typing.Sequence[str] = None, description: str = None) -> None:
         if semantic_types is None:
@@ -219,7 +214,9 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
         if path is not None:
             raise KeyError("Invalid path '{path}'.".format(path=path))
 
-        return self._default
+        # Attribute might not be set if object is not yet fully constructed. This can happen if
+        # you try to print the object (which calls this method) while it is being constructured.
+        return getattr(self, '_default', "__NOT_INITIALIZED__")
 
     def check_type(self, value: typing.Any, cls: type) -> bool:
         """
@@ -277,7 +274,7 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
         if utils.is_type(value) and issubclass(value, primitive_interfaces_base.PrimitiveBase):
             return value
         else:
-            return utils.get_type(value)
+            return type_util.deep_type(value)
 
     def validate(self, value: T) -> None:
         """
@@ -393,12 +390,12 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
         utils.log_once(logger, logging.WARNING, "Sampling a hyper-parameter '%(name)s' without known space. Using a default value.", {'name': self.name}, stack_info=True)
 
         if with_replacement:
-            size = random_state.randint(min_samples, max_samples + 1)
+            size = checked_random_state.randint(min_samples, max_samples + 1)
 
             return (self.get_default(),) * size
 
@@ -414,7 +411,7 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
             else:
                 assert min_samples == 0, min_samples
                 assert max_samples == 1, max_samples
-                return typing.cast(typing.Sequence[T], () if random_state.rand() >= 0.5 else (self.get_default(),))
+                return typing.cast(typing.Sequence[T], () if checked_random_state.rand() >= 0.5 else (self.get_default(),))
 
     def __repr__(self) -> str:
         return '{class_name}(default={default})'.format(
@@ -464,31 +461,31 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
 
         self.validate(value)
 
-        if utils.is_subclass(self.structural_type, typing.Union[str, int, float, bool, type(None)]):
-            if utils.is_float(type(value)) and not numpy.isfinite(value):
+        if utils.is_subclass(self.structural_type, (str, int, float, bool, type(None))):
+            if utils.is_float(type(value)) and not numpy.isfinite(value):  # type: ignore
                 return {
                     'encoding': 'pickle',
-                    'value': base64.b64encode(pickle.dumps(value)).decode('utf8'),
+                    'value': base64.b64encode(pickle.dumps(value, protocol=3)).decode('utf8'),
                 }
             else:
                 return value
         elif utils.is_subclass(self.structural_type, numpy.bool_):
             return bool(value)
         elif utils.is_subclass(self.structural_type, numpy.integer):
-            return int(value)
-        elif utils.is_subclass(self.structural_type, typing.Union[numpy.float32, numpy.float64]):
-            value = float(value)
-            if not numpy.isfinite(value):
+            return int(value)  # type: ignore
+        elif utils.is_subclass(self.structural_type, (numpy.float32, numpy.float64)):
+            value = float(value)  # type: ignore
+            if not numpy.isfinite(value):  # type: ignore
                 return {
                     'encoding': 'pickle',
-                    'value': base64.b64encode(pickle.dumps(value)).decode('utf8'),
+                    'value': base64.b64encode(pickle.dumps(value, protocol=3)).decode('utf8'),
                 }
             else:
                 return value
         else:
             return {
                 'encoding': 'pickle',
-                'value': base64.b64encode(pickle.dumps(value)).decode('utf8'),
+                'value': base64.b64encode(pickle.dumps(value, protocol=3)).decode('utf8'),
             }
 
     @deprecate.function(message="use value_from_json_structure method instead")
@@ -517,7 +514,7 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
 
             # TODO: Limit the types of values being able to load to prevent arbitrary code execution by a malicious pickle.
             value = pickle.loads(base64.b64decode(json['value'].encode('utf8')))
-        elif utils.is_subclass(self.structural_type, typing.Union[str, int, bool, type(None)]):
+        elif utils.is_subclass(self.structural_type, (str, int, bool, type(None))):
             # Handle a special case when value was parsed from JSON as float, but we expect an int.
             # If "json" is not really an integer then we set "value" to a float and leave
             # to "validate" to raise an exception.
@@ -525,13 +522,13 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
                 value = int(json)
             else:
                 value = json
-        elif utils.is_subclass(self.structural_type, typing.Union[str, float, bool, type(None)]):
+        elif utils.is_subclass(self.structural_type, (str, float, bool, type(None))):
             # Handle a special case when value was parsed from JSON as int, but we expect a float.
             if isinstance(json, int):
                 value = float(json)
             else:
                 value = json
-        elif utils.is_subclass(self.structural_type, typing.Union[str, int, float, bool, type(None)]):
+        elif utils.is_subclass(self.structural_type, (str, int, float, bool, type(None))):
             # If both int and float are accepted we assume the user of the value knows how to
             # differentiate between values or that precise numerical type does not matter.
             value = json
@@ -557,7 +554,7 @@ class Hyperparameter(typing.Generic[T], metaclass=HyperparameterMeta):
         """
 
         # Empty generator by default.
-        yield from ()  # type: ignore
+        yield from ()
 
     def transform_value(self, value: T, transform: typing.Callable, index: int = 0) -> T:
         """
@@ -655,20 +652,15 @@ class Primitive(Hyperparameter[T]):
     The default sampling method returns always classes (or a default value, which can be a
     primitive instance), but alternative implementations could sample across instances
     (and for example across also primitive's hyper-parameters).
-
-    Attributes
-    ----------
-    primitive_families:
-        A list of primitive families a matching primitive should be part of.
-    algorithm_types:
-        A list of algorithm types a matching primitive should implement at least one.
-    produce_methods:
-        A list of produce methods a matching primitive should provide all.
     """
 
-    primitive_families: 'typing.Sequence[base.PrimitiveFamily]'
-    algorithm_types: 'typing.Sequence[base.PrimitiveAlgorithmType]'
+    #: A list of primitive families a matching primitive should be part of.
+    primitive_families: 'typing.Sequence[base.PrimitiveFamily]'  # type: ignore
+    #: A list of algorithm types a matching primitive should implement at least one.
+    algorithm_types: 'typing.Sequence[base.PrimitiveAlgorithmType]'  # type: ignore
+    #: A list of produce methods a matching primitive should provide all.
     produce_methods: typing.Sequence[str]
+    matching_primitives: typing.Optional[typing.Sequence[typing.Union[T, typing.Type[T]]]]
 
     def __init__(self, default: typing.Type[T], primitive_families: 'typing.Sequence[base.PrimitiveFamily]' = None,  # type: ignore
                  algorithm_types: 'typing.Sequence[base.PrimitiveAlgorithmType]' = None, produce_methods: typing.Sequence[str] = None, *,  # type: ignore
@@ -681,25 +673,25 @@ class Primitive(Hyperparameter[T]):
             produce_methods = ()
 
         # Convert any strings to enums.
-        self.primitive_families: typing.Tuple[base.PrimitiveFamily, ...] = tuple(base.PrimitiveFamily[primitive_family] for primitive_family in primitive_families)  # type: ignore
-        self.algorithm_types: typing.Tuple[base.PrimitiveAlgorithmType, ...] = tuple(base.PrimitiveAlgorithmType[algorithm_type] for algorithm_type in algorithm_types)  # type: ignore
+        self.primitive_families = tuple(base.PrimitiveFamily[primitive_family] for primitive_family in primitive_families)
+        self.algorithm_types = tuple(base.PrimitiveAlgorithmType[algorithm_type] for algorithm_type in algorithm_types)
         self.produce_methods = tuple(produce_methods)
 
-        for primitive_family in self.primitive_families:  # type: ignore
+        for primitive_family in self.primitive_families:
             if primitive_family not in list(base.PrimitiveFamily):
                 raise exceptions.InvalidArgumentValueError("Unknown primitive family '{primitive_family}'.".format(primitive_family=primitive_family))
-        for algorithm_type in self.algorithm_types:  # type: ignore
+        for algorithm_type in self.algorithm_types:
             if algorithm_type not in list(base.PrimitiveAlgorithmType):
                 raise exceptions.InvalidArgumentValueError("Unknown algorithm type '{algorithm_type}'.".format(algorithm_type=algorithm_type))
         for produce_method in self.produce_methods:
             if produce_method != 'produce' and not produce_method.startswith('produce_'):
                 raise exceptions.InvalidArgumentValueError("Invalid produce method name '{produce_method}'.".format(produce_method=produce_method))
 
-        self.matching_primitives: typing.Sequence[typing.Union[T, typing.Type[T]]] = None
+        self.matching_primitives = None
 
         # Used for sampling.
         # See: https://github.com/numpy/numpy/issues/15935
-        self._choices: numpy.ndarray = None
+        self._choices: typing.Optional[numpy.ndarray] = None
 
         # Default value is checked by parent class calling "validate".
 
@@ -725,7 +717,7 @@ class Primitive(Hyperparameter[T]):
             from d3m import index
 
             index.load_all()
-            all_primitives = index.get_loaded_primitives()  # type: ignore
+            all_primitives = index.get_loaded_primitives()
 
         matching_primitives = []
         for primitive in all_primitives:
@@ -739,12 +731,12 @@ class Primitive(Hyperparameter[T]):
 
         if utils.is_type(default):
             if default not in matching_primitives:
-                matching_primitives.append(default)  # type: ignore
+                matching_primitives.append(default)
         else:
             if type(default) not in matching_primitives:
-                matching_primitives.append(default)  # type: ignore
+                matching_primitives.append(default)
             else:
-                matching_primitives[matching_primitives.index(type(default))] = default  # type: ignore
+                matching_primitives[matching_primitives.index(type(default))] = default
 
         self.matching_primitives = matching_primitives
         self._choices = numpy.array(matching_primitives, dtype=object)
@@ -820,18 +812,18 @@ class Primitive(Hyperparameter[T]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
         if self.matching_primitives is None:
             self.populate_primitives()
 
-        return random_state.choice(self._choices)
+        return checked_random_state.choice(self._choices)
 
     def get_max_samples(self) -> typing.Optional[int]:
         if self.matching_primitives is None:
             self.populate_primitives()
 
-        return len(self.matching_primitives)
+        return len(self.matching_primitives)  # type: ignore
 
     def sample_multiple(  # type: ignore
         self, min_samples: int = 0, max_samples: int = None, random_state: RandomState = None, *, with_replacement: bool = False,
@@ -861,17 +853,17 @@ class Primitive(Hyperparameter[T]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
         if self.matching_primitives is None:
             self.populate_primitives()
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
-        return tuple(random_state.choice(self._choices, size, replace=with_replacement))
+        return tuple(checked_random_state.choice(self._choices, size, replace=with_replacement))
 
     def __repr__(self) -> str:
-        return '{class_name}(default={default}, primitive_families={primitive_families}, algorithm_types={algorithm_types})'.format(
+        return '{class_name}(default={default}, primitive_families={primitive_families}, algorithm_types={algorithm_types}, produce_methods={produce_methods})'.format(
             class_name=type(self).__name__,
             default=self.get_default(),
             primitive_families=[primitive_family.name for primitive_family in self.primitive_families],  # type: ignore
@@ -880,7 +872,7 @@ class Primitive(Hyperparameter[T]):
         )
 
     @functools.lru_cache()
-    def to_simple_structure(self) -> typing.Dict:  # type: ignore
+    def to_simple_structure(self) -> typing.Dict:
         structure = super().to_simple_structure()
         structure.update({
             'primitive_families': list(self.primitive_families),
@@ -899,10 +891,10 @@ class Primitive(Hyperparameter[T]):
         if utils.is_type(value):
             return {'class': value.metadata.query()['python_path']}  # type: ignore
         else:
-            return {'instance': base64.b64encode(pickle.dumps(value)).decode('utf8')}
+            return {'instance': base64.b64encode(pickle.dumps(value, protocol=3)).decode('utf8')}
 
     @deprecate.function(message="use value_from_json_structure method instead")
-    def value_from_json(self, json: typing.Any) -> typing.Union[T, typing.Type[T]]:  # type: ignore
+    def value_from_json(self, json: typing.Any) -> typing.Union[T, typing.Type[T]]:
         return self.value_from_json_structure(json)
 
     def value_from_json_structure(self, json: typing.Any) -> typing.Union[T, typing.Type[T]]:  # type: ignore
@@ -991,10 +983,10 @@ class Constant(Hyperparameter[T]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
         if with_replacement:
-            size = random_state.randint(min_samples, max_samples + 1)
+            size = checked_random_state.randint(min_samples, max_samples + 1)
 
             return (self.get_default(),) * size
 
@@ -1010,7 +1002,7 @@ class Constant(Hyperparameter[T]):
             else:
                 assert min_samples == 0, min_samples
                 assert max_samples == 1, max_samples
-                return typing.cast(typing.Sequence[T], () if random_state.rand() >= 0.5 else (self.get_default(),))
+                return typing.cast(typing.Sequence[T], () if checked_random_state.rand() >= 0.5 else (self.get_default(),))
 
 
 class Bounded(Hyperparameter[T]):
@@ -1026,25 +1018,21 @@ class Bounded(Hyperparameter[T]):
 
     Type variable ``T`` is optional and if not provided an attempt to
     automatically infer it from bounds and ``default`` will be made.
-
-    Attributes
-    ----------
-    lower:
-        A lower bound.
-    lower_inclusive:
-        Is the lower bound inclusive?
-    upper:
-        An upper bound.
-    upper_inclusive:
-        Is the upper bound inclusive?
     """
 
+    #: A lower bound.
     lower: typing.Any
+    #: Is the lower bound inclusive?
     lower_inclusive: bool
+    #: An upper bound.
     upper: typing.Any
+    #: Is the upper bound inclusive?
     upper_inclusive: bool
 
-    def __init__(self, lower: T, upper: T, default: T, *, lower_inclusive: bool = True, upper_inclusive: bool = True, semantic_types: typing.Sequence[str] = None, description: str = None) -> None:
+    def __init__(
+        self, lower: typing.Optional[T], upper: typing.Optional[T], default: T, *, lower_inclusive: bool = True,
+        upper_inclusive: bool = True, semantic_types: typing.Sequence[str] = None, description: str = None,
+    ) -> None:
         self.lower = lower
         self.upper = upper
         self.lower_inclusive = lower_inclusive
@@ -1075,7 +1063,7 @@ class Bounded(Hyperparameter[T]):
             self.structural_type = structural_type
 
         if self.lower is None or self.upper is None:
-            maybe_optional_structural_type = typing.cast(type, typing.Optional[self.structural_type])  # type: ignore
+            maybe_optional_structural_type = typing.cast(type, typing.Optional[self.structural_type])
         else:
             maybe_optional_structural_type = self.structural_type
 
@@ -1180,7 +1168,7 @@ class Bounded(Hyperparameter[T]):
 
         # This my throw an exception if value is not comparable, but this is on purpose.
         if self.lower is None:
-            if not (value is None or self._upper_compare(value, self.upper)):  # type: ignore
+            if not (value is None or self._upper_compare(value, self.upper)):
                 raise exceptions.InvalidArgumentValueError(
                     "Value '{value}' {for_name}is outside of range {lower_interval}{lower}, {upper}{upper_interval}.".format(
                         value=value, for_name=self._for_name(), lower_interval=self._lower_interval,
@@ -1188,7 +1176,7 @@ class Bounded(Hyperparameter[T]):
                     ),
                 )
         elif self.upper is None:
-            if not (value is None or self._lower_compare(self.lower, value)):  # type: ignore
+            if not (value is None or self._lower_compare(self.lower, value)):
                 raise exceptions.InvalidArgumentValueError(
                     "Value '{value}' {for_name}is outside of range {lower_interval}{lower}, {upper}{upper_interval}.".format(
                         value=value, for_name=self._for_name(), lower_interval=self._lower_interval,
@@ -1196,7 +1184,7 @@ class Bounded(Hyperparameter[T]):
                     ),
                 )
         else:
-            if not (self._lower_compare(self.lower, value) and self._upper_compare(value, self.upper)):  # type: ignore
+            if not (self._lower_compare(self.lower, value) and self._upper_compare(value, self.upper)):
                 raise exceptions.InvalidArgumentValueError(
                     "Value '{value}' {for_name}is outside of range {lower_interval}{lower}, {upper}{upper_interval}.".format(
                         value=value, for_name=self._for_name(), lower_interval=self._lower_interval,
@@ -1206,7 +1194,7 @@ class Bounded(Hyperparameter[T]):
 
     def validate_default(self) -> None:
         if self.lower is None or self.upper is None:
-            maybe_optional_structural_type = typing.cast(type, typing.Optional[self.structural_type])  # type: ignore
+            maybe_optional_structural_type = typing.cast(type, typing.Optional[self.structural_type])
         else:
             maybe_optional_structural_type = self.structural_type
 
@@ -1234,7 +1222,7 @@ class Bounded(Hyperparameter[T]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
         if getattr(self, '_is_int', False) or getattr(self, '_is_float', False):
             utils.log_once(
@@ -1245,9 +1233,9 @@ class Bounded(Hyperparameter[T]):
             )
 
             if getattr(self, '_is_int', False):
-                return self.structural_type(random_state.randint(self._effective_lower, self._effective_upper))
+                return self.structural_type(checked_random_state.randint(self._effective_lower, self._effective_upper))
             else:
-                return self.structural_type(random_state.uniform(self._effective_lower, self._effective_upper))
+                return self.structural_type(checked_random_state.uniform(self._effective_lower, self._effective_upper))
 
         elif self.lower is not None and self.upper is not None:
             utils.log_once(
@@ -1303,17 +1291,17 @@ class Bounded(Hyperparameter[T]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -1349,13 +1337,9 @@ class Enumeration(Hyperparameter[T]):
 
     Type variable ``T`` is optional and if not provided an attempt to
     automatically infer it from ``values`` will be made.
-
-    Attributes
-    ----------
-    values:
-        A list of choice values.
     """
 
+    #: A list of choice values.
     values: typing.Sequence[typing.Any]
 
     def __init__(self, values: typing.Sequence[T], default: T, *, semantic_types: typing.Sequence[str] = None, description: str = None) -> None:
@@ -1386,7 +1370,7 @@ class Enumeration(Hyperparameter[T]):
         if utils.has_duplicates(self.values):
             raise exceptions.InvalidArgumentValueError("Values '{values}' contain duplicates.".format(values=self.values))
 
-        self._has_nan = any(utils.is_float(type(value)) and numpy.isnan(value) for value in self.values)
+        self._has_nan = any(utils.is_float(type(value)) and numpy.isnan(value) for value in self.values)  # type: ignore
 
         # Default value is checked to be among values by parent class calling "validate".
 
@@ -1394,7 +1378,7 @@ class Enumeration(Hyperparameter[T]):
 
     def validate(self, value: T) -> None:
         # We have to specially handle NaN because it is not equal to any value.
-        if value not in self.values and not (self._has_nan and utils.is_float(type(value)) and numpy.isnan(value)):
+        if value not in self.values and not (self._has_nan and utils.is_float(type(value)) and numpy.isnan(value)):  # type: ignore
             raise exceptions.InvalidArgumentValueError("Value '{value}' {for_name}is not among values.".format(value=value, for_name=self._for_name()))
 
     def sample(self, random_state: RandomState = None) -> T:
@@ -1413,9 +1397,9 @@ class Enumeration(Hyperparameter[T]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        return random_state.choice(self._choices)
+        return checked_random_state.choice(self._choices)
 
     def get_max_samples(self) -> typing.Optional[int]:
         return len(self.values)
@@ -1445,11 +1429,11 @@ class Enumeration(Hyperparameter[T]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
-        return tuple(random_state.choice(self._choices, size, replace=with_replacement))
+        return tuple(checked_random_state.choice(self._choices, size, replace=with_replacement))
 
     def __repr__(self) -> str:
         return '{class_name}(values={values}, default={default})'.format(
@@ -1490,22 +1474,15 @@ class UniformInt(Bounded[int]):
     """
     An int hyper-parameter with a value drawn uniformly from ``[lower, upper)``,
     by default.
-
-    Attributes
-    ----------
-    lower:
-        A lower bound.
-    lower_inclusive:
-        Is the lower bound inclusive?
-    upper:
-        An upper bound.
-    upper_inclusive:
-        Is the upper bound inclusive?
     """
 
+    #: A lower bound.
     lower: int
+    #: Is the lower bound inclusive?
     lower_inclusive: bool
+    #: An upper bound.
     upper: int
+    #: Is the upper bound inclusive?
     upper_inclusive: bool
 
     def __init__(
@@ -1539,9 +1516,9 @@ class UniformInt(Bounded[int]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        return self.structural_type(random_state.randint(self._effective_lower, self._effective_upper))
+        return self.structural_type(checked_random_state.randint(self._effective_lower, self._effective_upper))
 
     def get_max_samples(self) -> typing.Optional[int]:
         return self._effective_upper - self._effective_lower
@@ -1553,25 +1530,17 @@ class Uniform(Bounded[float]):
     by default.
 
     If ``q`` is provided, then the value is drawn according to ``round(uniform(lower, upper) / q) * q``.
-
-    Attributes
-    ----------
-    lower:
-        A lower bound.
-    upper:
-        An upper bound.
-    q:
-        An optional quantization factor.
-    lower_inclusive:
-        Is the lower bound inclusive?
-    upper_inclusive:
-        Is the upper bound inclusive?
     """
 
+    #: A lower bound.
     lower: float
+    #: An upper bound.
     upper: float
-    q: float
+    #: An optional quantization factor.
+    q: typing.Optional[float]
+    #: Is the lower bound inclusive?
     lower_inclusive: bool
+    #: Is the upper bound inclusive?
     upper_inclusive: bool
 
     def __init__(
@@ -1607,9 +1576,9 @@ class Uniform(Bounded[float]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        value = random_state.uniform(self._effective_lower, self._effective_upper)
+        value = checked_random_state.uniform(self._effective_lower, self._effective_upper)
 
         if self.q is None:
             return self.structural_type(value)
@@ -1653,25 +1622,17 @@ class LogUniform(Bounded[float]):
     so that the logarithm of the value is uniformly distributed.
 
     If ``q`` is provided, then the value is drawn according to ``round(exp(uniform(log(lower), log(upper))) / q) * q``.
-
-    Attributes
-    ----------
-    lower:
-        A lower bound.
-    upper:
-        An upper bound.
-    q:
-        An optional quantization factor.
-    lower_inclusive:
-        Is the lower bound inclusive?
-    upper_inclusive:
-        Is the upper bound inclusive?
     """
 
+    #: A lower bound.
     lower: float
+    #: An upper bound.
     upper: float
-    q: float
+    #: An optional quantization factor.
+    q: typing.Optional[float]
+    #: Is the lower bound inclusive?
     lower_inclusive: bool
+    #: Is the upper bound inclusive?
     upper_inclusive: bool
 
     def __init__(
@@ -1707,9 +1668,9 @@ class LogUniform(Bounded[float]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        value = numpy.exp(random_state.uniform(numpy.log(self._effective_lower), numpy.log(self._effective_upper)))
+        value = numpy.exp(checked_random_state.uniform(numpy.log(self._effective_lower), numpy.log(self._effective_upper)))
 
         if self.q is None:
             return self.structural_type(value)
@@ -1751,20 +1712,14 @@ class Normal(Hyperparameter[float]):
     A float hyper-parameter with a value drawn normally distributed according to ``mu`` and ``sigma``.
 
     If ``q`` is provided, then the value is drawn according to ``round(normal(mu, sigma) / q) * q``.
-
-    Attributes
-    ----------
-    mu:
-        A mean of normal distribution.
-    sigma:
-        A standard deviation of normal distribution.
-    q:
-        An optional quantization factor.
     """
 
+    #: A mean of normal distribution.
     mu: float
+    #: A standard deviation of normal distribution.
     sigma: float
-    q: float
+    #: An optional quantization factor.
+    q: typing.Optional[float]
 
     def __init__(self, mu: float, sigma: float, default: float, q: float = None, *, semantic_types: typing.Sequence[str] = None, description: str = None) -> None:
         self.mu = mu
@@ -1791,9 +1746,9 @@ class Normal(Hyperparameter[float]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        value = random_state.normal(self.mu, self.sigma)
+        value = checked_random_state.normal(self.mu, self.sigma)
 
         if self.q is None:
             return self.structural_type(value)
@@ -1824,17 +1779,17 @@ class Normal(Hyperparameter[float]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -1870,20 +1825,14 @@ class LogNormal(Hyperparameter[float]):
     normally distributed.
 
     If ``q`` is provided, then the value is drawn according to ``round(exp(normal(mu, sigma)) / q) * q``.
-
-    Attributes
-    ----------
-    mu:
-        A mean of normal distribution.
-    sigma:
-        A standard deviation of normal distribution.
-    q:
-        An optional quantization factor.
     """
 
+    #: A mean of normal distribution.
     mu: float
+    #: A standard deviation of normal distribution.
     sigma: float
-    q: float
+    #: An optional quantization factor.
+    q: typing.Optional[float]
 
     def __init__(self, mu: float, sigma: float, default: float, q: float = None, *, semantic_types: typing.Sequence[str] = None, description: str = None) -> None:
         self.mu = mu
@@ -1910,9 +1859,9 @@ class LogNormal(Hyperparameter[float]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        value = numpy.exp(random_state.normal(self.mu, self.sigma))
+        value = numpy.exp(checked_random_state.normal(self.mu, self.sigma))
 
         if self.q is None:
             return self.structural_type(value)
@@ -1945,17 +1894,17 @@ class LogNormal(Hyperparameter[float]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -2001,15 +1950,11 @@ class Union(Hyperparameter[T]):
     This is similar to `Choice` hyper-parameter that it combines hyper-parameters, but
     `Union` combines individual hyper-parameters, while `Choice` combines configurations
     of multiple hyper-parameters.
-
-    Attributes
-    ----------
-    configuration:
-        A configuration of hyper-parameters to combine into one. It is important
-        that configuration uses an ordered dict so that order is reproducible
-        (default dict has unspecified order).
     """
 
+    #: A configuration of hyper-parameters to combine into one. It is important
+    #: that configuration uses an ordered dict so that order is reproducible
+    #: (default dict has unspecified order).
     configuration: frozendict.FrozenOrderedDict
 
     def __init__(self, configuration: 'collections.OrderedDict[str, Hyperparameter]', default: str, *, semantic_types: typing.Sequence[str] = None,
@@ -2125,14 +2070,14 @@ class Union(Hyperparameter[T]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        hyperparameter = random_state.choice(self._choices)
+        hyperparameter = checked_random_state.choice(self._choices)
 
-        return hyperparameter.sample(random_state)
+        return hyperparameter.sample(checked_random_state)
 
     @functools.lru_cache()
-    def get_max_samples(self) -> typing.Optional[int]:  # type: ignore
+    def get_max_samples(self) -> typing.Optional[int]:
         all_max_samples = 0
         for hyperparameter in self.configuration.values():
             hyperparameter_max_samples = hyperparameter.get_max_samples()
@@ -2168,17 +2113,17 @@ class Union(Hyperparameter[T]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -2186,7 +2131,7 @@ class Union(Hyperparameter[T]):
         return tuple(sample_list)
 
     @functools.lru_cache()
-    def __repr__(self) -> str:  # type: ignore
+    def __repr__(self) -> str:
         return '{class_name}(configuration={{{configuration}}}, default={default})'.format(
             class_name=type(self).__name__,
             configuration=', '.join('{name}: {hyperparameter}'.format(name=name, hyperparameter=hyperparameter) for name, hyperparameter in self.configuration.items()),
@@ -2194,7 +2139,7 @@ class Union(Hyperparameter[T]):
         )
 
     @functools.lru_cache()
-    def to_simple_structure(self) -> typing.Dict:  # type: ignore
+    def to_simple_structure(self) -> typing.Dict:
         structure = super().to_simple_structure()
         structure.update({
             'configuration': {name: hyperparameter.to_simple_structure() for name, hyperparameter in self.configuration.items()}
@@ -2222,13 +2167,9 @@ class Choice(Hyperparameter[typing.Dict]):
     This is similar to `Union` hyper-parameter that it combines hyper-parameters, but
     `Choice` combines configurations of multiple hyper-parameters, while `Union` combines
     individual hyper-parameters.
-
-    Attributes
-    ----------
-    choices:
-        A map between choices and their classes defining their hyper-parameters configuration.
     """
 
+    #: A map between choices and their classes defining their hyper-parameters configuration.
     choices: frozendict.frozendict
 
     def __init__(self, choices: 'typing.Dict[str, typing.Type[Hyperparams]]', default: str, *, semantic_types: typing.Sequence[str] = None,
@@ -2315,11 +2256,11 @@ class Choice(Hyperparameter[typing.Dict]):
         A sampled value.
         """
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        choice = random_state.choice(self._choices)
+        choice = checked_random_state.choice(self._choices)
 
-        sample = self.choices[choice].sample(random_state)
+        sample = self.choices[choice].sample(checked_random_state)
 
         # The "choice" hyper-parameter should be sampled to its choice value.
         assert choice == sample['choice'], sample
@@ -2327,7 +2268,7 @@ class Choice(Hyperparameter[typing.Dict]):
         return sample
 
     @functools.lru_cache()
-    def get_max_samples(self) -> typing.Optional[int]:  # type: ignore
+    def get_max_samples(self) -> typing.Optional[int]:
         all_max_samples = 0
         for hyperparams in self.choices.values():
             hyperparams_max_samples = hyperparams.get_max_samples()
@@ -2360,17 +2301,17 @@ class Choice(Hyperparameter[typing.Dict]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -2378,7 +2319,7 @@ class Choice(Hyperparameter[typing.Dict]):
         return tuple(sample_list)
 
     @functools.lru_cache()
-    def __repr__(self) -> str:  # type: ignore
+    def __repr__(self) -> str:
         return '{class_name}(choices={{{choices}}}, default={default})'.format(
             class_name=type(self).__name__,
             choices=', '.join('{choice}: {hyperparams}'.format(choice=choice, hyperparams=hyperparams) for choice, hyperparams in self.choices.items()),
@@ -2386,7 +2327,7 @@ class Choice(Hyperparameter[typing.Dict]):
         )
 
     @functools.lru_cache()
-    def to_simple_structure(self) -> typing.Dict:  # type: ignore
+    def to_simple_structure(self) -> typing.Dict:
         structure = super().to_simple_structure()
         structure.update({
             'choices': {choice: hyperparams.to_simple_structure() for choice, hyperparams in self.choices.items()}
@@ -2431,22 +2372,15 @@ class Choice(Hyperparameter[typing.Dict]):
 class _Sequence(Hyperparameter[S]):
     """
     Abstract class. Do not use directly.
-
-    Attributes
-    ----------
-    elements:
-        A hyper-parameter or hyper-parameters configuration of set elements.
-    min_size:
-        A minimal number of elements in the set.
-    max_size:
-        A maximal number of elements in the set. Can be ``None`` for no limit.
-    is_configuration:
-        Is ``elements`` a hyper-parameter or hyper-parameters configuration?
     """
 
+    #: A hyper-parameter or hyper-parameters configuration of set elements.
     elements: 'typing.Union[Hyperparameter, typing.Type[Hyperparams]]'
+    #: A minimal number of elements in the set.
     min_size: int
-    max_size: int
+    #: A maximal number of elements in the set. Can be ``None`` for no limit.
+    max_size: typing.Optional[int]
+    #: Is ``elements`` a hyper-parameter or hyper-parameters configuration?
     is_configuration: bool
 
     def __init__(
@@ -2491,7 +2425,7 @@ class _Sequence(Hyperparameter[S]):
             if elements_type is not self.elements:
                 raise exceptions.InvalidArgumentTypeError("Structural type does not match hyper-parameters configuration type.")
         else:
-            if elements_type is not elements.structural_type:
+            if elements_type != elements.structural_type:
                 raise exceptions.InvalidArgumentTypeError("Structural type does not match elements hyper-parameter's structural type.")
 
         # Default value is checked by parent class calling "validate".
@@ -2554,7 +2488,7 @@ class _Sequence(Hyperparameter[S]):
         )
 
     @functools.lru_cache()
-    def to_simple_structure(self) -> typing.Dict:  # type: ignore
+    def to_simple_structure(self) -> typing.Dict:
         structure = super().to_simple_structure()
         structure.update({
             'elements': self.elements.to_simple_structure(),
@@ -2680,7 +2614,7 @@ class Set(_Sequence[S]):
         return self.elements.sample_multiple(min_samples=self.min_size, max_samples=self.max_size, random_state=random_state, with_replacement=False)  # type: ignore
 
     @functools.lru_cache()
-    def get_max_samples(self) -> typing.Optional[int]:  # type: ignore
+    def get_max_samples(self) -> typing.Optional[int]:
         max_samples = self.elements.get_max_samples()
         if max_samples is None:
             return None
@@ -2715,17 +2649,17 @@ class Set(_Sequence[S]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 value_set: frozenset = frozenset(value)
                 if value_set not in sample_set:
                     sample_set.add(value_set)
@@ -2739,13 +2673,9 @@ class SortedSet(Set[S]):
     Similar to `Set` hyper-parameter, but elements of values are required to be sorted from smallest to largest, by default.
 
     Hyper-parameters configuration as elements is not supported.
-
-    Attributes
-    ----------
-    ascending:
-        Are values required to be sorted from smallest to largest (``True``) or the opposite (``False``).
     """
 
+    #: Are values required to be sorted from smallest to largest (``True``) or the opposite (``False``).
     ascending: bool
 
     def __init__(
@@ -2772,7 +2702,7 @@ class SortedSet(Set[S]):
 
     def sample(self, random_state: RandomState = None) -> S:
         values = super().sample(random_state)
-        return type(values)(sorted(values, reverse=not self.ascending))
+        return type(values)(sorted(values, reverse=not self.ascending))  # type: ignore
 
     def to_simple_structure(self) -> typing.Dict:  # type: ignore
         structure = super().to_simple_structure()
@@ -2824,7 +2754,7 @@ class List(_Sequence[S]):
         return self.elements.sample_multiple(min_samples=self.min_size, max_samples=self.max_size, random_state=random_state, with_replacement=True)  # type: ignore
 
     @functools.lru_cache()
-    def get_max_samples(self) -> typing.Optional[int]:  # type: ignore
+    def get_max_samples(self) -> typing.Optional[int]:
         max_samples = self.elements.get_max_samples()
         if max_samples is None:
             return None
@@ -2863,17 +2793,17 @@ class List(_Sequence[S]):
 
         min_samples, max_samples = self._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [self.sample(random_state) for i in range(size)]
+            sample_list: list = [self.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = self.sample(random_state)
+                value = self.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -2886,13 +2816,9 @@ class SortedList(List[S]):
     Similar to `List` hyper-parameter, but elements of values are required to be sorted from smallest to largest, by default.
 
     Hyper-parameters configuration as elements is not supported.
-
-    Attributes
-    ----------
-    ascending:
-        Are values required to be sorted from smallest to largest (``True``) or the opposite (``False``).
     """
 
+    #: Are values required to be sorted from smallest to largest (``True``) or the opposite (``False``).
     ascending: bool
 
     def __init__(
@@ -2919,10 +2845,10 @@ class SortedList(List[S]):
 
     def sample(self, random_state: RandomState = None) -> S:
         values = super().sample(random_state)
-        return type(values)(sorted(values, reverse=not self.ascending))
+        return type(values)(sorted(values, reverse=not self.ascending))  # type: ignore
 
     @functools.lru_cache()
-    def get_max_samples(self) -> typing.Optional[int]:  # type: ignore
+    def get_max_samples(self) -> typing.Optional[int]:
         max_samples = self.elements.get_max_samples()
         if max_samples is None:
             return None
@@ -3024,13 +2950,9 @@ class Hyperparams(dict, metaclass=HyperparamsMeta):
 
     When creating an instance of the class, all hyper-parameters have
     to be provided. Default values have to be explicitly passed.
-
-    Attributes
-    ----------
-    configuration:
-        A hyper-parameters configuration.
     """
 
+    #: A hyper-parameters configuration.
     configuration: typing.ClassVar[frozendict.FrozenOrderedDict] = frozendict.FrozenOrderedDict()
 
     def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
@@ -3040,7 +2962,7 @@ class Hyperparams(dict, metaclass=HyperparamsMeta):
 
         super().__init__(values)
 
-        self._hash: int = None
+        self._hash: typing.Optional[int] = None
 
     @classmethod
     def sample(cls: typing.Type[H], random_state: RandomState = None) -> H:
@@ -3056,12 +2978,13 @@ class Hyperparams(dict, metaclass=HyperparamsMeta):
         -------
         An instance of hyper-parameters.
         """
-        random_state = sklearn_validation.check_random_state(random_state)
+
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
         values = {}
 
         for name, hyperparameter in cls.configuration.items():
-            values[name] = hyperparameter.sample(random_state)
+            values[name] = hyperparameter.sample(checked_random_state)
 
         return cls(values)
 
@@ -3086,17 +3009,17 @@ class Hyperparams(dict, metaclass=HyperparamsMeta):
     def sample_multiple(cls: typing.Type[H], min_samples: int = 0, max_samples: int = None, random_state: RandomState = None, *, with_replacement: bool = False) -> typing.Sequence[H]:
         min_samples, max_samples = cls._check_sample_size(min_samples, max_samples, with_replacement)
 
-        random_state = sklearn_validation.check_random_state(random_state)
+        checked_random_state = sklearn_validation.check_random_state(random_state)
 
-        size = random_state.randint(min_samples, max_samples + 1)
+        size = checked_random_state.randint(min_samples, max_samples + 1)
 
         if with_replacement:
-            sample_list: list = [cls.sample(random_state) for i in range(size)]
+            sample_list: list = [cls.sample(checked_random_state) for i in range(size)]
         else:
             sample_set: set = set()
             sample_list = []
             while len(sample_list) != size:
-                value = cls.sample(random_state)
+                value = cls.sample(checked_random_state)
                 if value not in sample_set:
                     sample_set.add(value)
                     sample_list.append(value)
@@ -3340,8 +3263,6 @@ class Hyperparams(dict, metaclass=HyperparamsMeta):
             if set(cls.__dict__.keys()) - DEFAULT_HYPERPARAMS_CLASS_ATTRIBUTES:
                 raise pickle.PickleError("A class with custom attributes not defined at a global scope.")
 
-            cls = typing.cast(typing.Type[Hyperparams], cls)
-
             define_args_list.insert(0, {
                 'configuration': cls.configuration,
                 'class_name': getattr(cls, '__name__', None),
@@ -3357,7 +3278,7 @@ class Hyperparams(dict, metaclass=HyperparamsMeta):
         return _recreate_hyperparams_class, (base_cls, define_args_list), self.__getstate__()
 
     # It is immutable, so hash can be defined.
-    def __hash__(self) -> int:
+    def __hash__(self) -> int:  # type: ignore
         if self._hash is None:
             h = 0
             for key, value in self.items():

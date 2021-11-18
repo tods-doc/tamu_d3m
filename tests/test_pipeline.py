@@ -34,7 +34,7 @@ from d3m.primitive_interfaces import base, transformer, supervised_learning
 TEST_PIPELINE_1 = """
 {
   "id": "2b50a7db-c5e2-434c-b02d-9e595bd56788",
-  "digest": "b87dbbd5b8bcc1470050a756cf22d6def2662a61482debf55c09948225372411",
+  "digest": "d37e8def667186930f63c680eae6356882bc41f2469e90fea495040e3e5e4e43",
   "schema": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
   "source": {
     "name": "Test author",
@@ -302,6 +302,50 @@ TEST_PIPELINE_2 = """
 }
 """
 
+TEST_PIPELINE_3 = """
+{
+  "id": "efcae3da-1df4-48c3-9bb3-025cb548a743",
+  "digest": "36c25663cead4f902bb281721bf44b2174ade24332752f71d4850aa2243ccb59",
+  "schema": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
+  "created": "2020-06-01T02:42:27.443844Z",
+  "name": "Test pipeline",
+  "description": "Just a test pipeline",
+  "inputs": [
+    {}
+  ],
+  "outputs": [
+    {
+      "data": "steps.0.produce"
+    }
+  ],
+  "steps": [
+    {
+      "type": "PRIMITIVE",
+      "primitive": {
+        "id": "964f6722-b30c-46ef-8178-37a80d408572",
+        "version": "0.1.0",
+        "python_path": "d3m.primitives.test.NewHyperparamsPrimitive",
+        "name": "New Hyperparams Primitive"
+      },
+      "arguments": {
+        "inputs": {
+          "type": "CONTAINER",
+          "data": "inputs.0"
+        },
+        "outputs": {
+          "type": "CONTAINER",
+          "data": "inputs.0"
+        }
+      },
+      "outputs": [
+        {
+          "id": "produce"
+        }
+      ]
+    }
+  ]
+}
+"""
 
 class MockPrimitiveBuilder:
     """
@@ -540,6 +584,39 @@ with utils.silence():
         def set_params(self, *, params: Params) -> None:
             pass
 
+    class PipelineTestNewHyperparams(hyperparams.Hyperparams):
+        a = hyperparams.List(hyperparams.Enumeration([0, 1, 2, 3, 4], 3), (1, 0, 2, 3, 4), 5, 7, semantic_types=['https://metadata.datadrivendiscovery.org/types/TuningParameter'])
+        b = hyperparams.SortedList(hyperparams.Enumeration(['a', 'b', 'c', 'd', 'e'], 'e'), ('a', 'b', 'c', 'd', 'e'), 2, 5, semantic_types=['https://metadata.datadrivendiscovery.org/types/TuningParameter'])
+        c = hyperparams.SortedSet(hyperparams.Enumeration(['a', 'b', 'c', 'd', 'e'], 'e'), ('a', 'b', 'c', 'd', 'e'), 3, 5, semantic_types=['https://metadata.datadrivendiscovery.org/types/TuningParameter'])
+        d = hyperparams.UniformInt(0, 20, 7, lower_inclusive=True, upper_inclusive=False, semantic_types=['https://metadata.datadrivendiscovery.org/types/TuningParameter'])
+
+    class NewHyperparamsPrimitive(supervised_learning.SupervisedLearnerPrimitiveBase[Inputs, Outputs, Params, PipelineTestNewHyperparams]):
+        metadata = metadata_base.PrimitiveMetadata({
+            'id': '964f6722-b30c-46ef-8178-37a80d408572',
+            'version': '0.1.0',
+            'name': "New Hyperparams Primitive",
+            'python_path': 'd3m.primitives.test.NewHyperparamsPrimitive',
+            'algorithm_types': [
+                metadata_base.PrimitiveAlgorithmType.SUPPORT_VECTOR_MACHINE,
+            ],
+            'primitive_family': metadata_base.PrimitiveFamily.CLASSIFICATION,
+        })
+
+        def produce(self, *, inputs: Inputs, timeout: float = None, iterations: int = None) -> base.CallResult[Outputs]:
+            pass
+
+        def set_training_data(self, *, inputs: Inputs, outputs: Outputs) -> None:
+            pass
+
+        def fit(self, *, timeout: float = None, iterations: int = None) -> base.CallResult[None]:
+            pass
+
+        def get_params(self) -> Params:
+            pass
+
+        def set_params(self, *, params: Params) -> None:
+            pass
+
 
 class TestPipeline(unittest.TestCase):
     @classmethod
@@ -574,11 +651,17 @@ class TestPipeline(unittest.TestCase):
                 def produce_score(self, *, inputs: PipelineTestInputs, offset: float, timeout: float = None, iterations: int = None) -> base.CallResult[Outputs]:
                     pass
 
-                def multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: PipelineTestInputs, extra_data: Inputs, offset: float, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
-                    return self._multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, extra_data=extra_data, offset=offset)
+                def produce_another(self, *, inputs: PipelineTestInputs, right_inputs: Inputs, timeout: float = None, iterations: int = None) -> base.CallResult[Outputs]:
+                    pass
 
-                def fit_multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: PipelineTestInputs, extra_data: Inputs, offset: float, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
-                    return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, extra_data=extra_data, offset=offset)
+                def produce_state(self, *, timeout: float = None, iterations: int = None) -> base.CallResult[Outputs]:
+                    pass
+
+                def multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: PipelineTestInputs, extra_data: Inputs, offset: float, right_inputs: Inputs, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
+                    return self._multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, extra_data=extra_data, offset=offset, right_inputs=right_inputs)
+
+                def fit_multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: PipelineTestInputs, extra_data: Inputs, offset: float, right_inputs: Inputs, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
+                    return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, extra_data=extra_data, offset=offset, right_inputs=right_inputs)
 
             class SimplePipelineTestPrimitive(transformer.TransformerPrimitiveBase[PipelineTestInputs, Outputs, PipelineTestHyperparams]):
                 metadata = metadata_base.PrimitiveMetadata({
@@ -627,6 +710,7 @@ class TestPipeline(unittest.TestCase):
             index.register_primitive('d3m.primitives.test.PipelineTestPrimitive', PipelineTestPrimitive)
             index.register_primitive('d3m.primitives.test.SimplePipelineTestPrimitive', SimplePipelineTestPrimitive)
             index.register_primitive('d3m.primitives.test.ColumnSelectionPrimitive', ColumnSelectionPrimitive)
+            index.register_primitive('d3m.primitives.test.NewHyperparamsPrimitive', NewHyperparamsPrimitive)
 
     def test_basic(self):
         self.maxDiff = None
@@ -729,12 +813,46 @@ class TestPipeline(unittest.TestCase):
         # Test that hyper-parameter can have a primitive instance as a default value
         # and that such primitive can have its metadata converted to JSON.
 
-        self.assertEqual(index.get_primitive('d3m.primitives.test.Model2Primitive').metadata.to_internal_json_structure()['primitive_code']['hyperparams']['base_estimator'], {
-            'type': 'd3m.metadata.hyperparams.Hyperparameter',
-            'default': 'd3m.primitives.test.LossPrimitive(hyperparams=Hyperparams({}), random_seed=0)',
-            'structural_type': 'd3m.primitive_interfaces.base.PrimitiveBase',
-            'semantic_types': ['https://metadata.datadrivendiscovery.org/types/TuningParameter'],
-        })
+        self.assertIn(index.get_primitive('d3m.primitives.test.Model2Primitive').metadata.to_internal_json_structure()['primitive_code']['hyperparams']['base_estimator'], [
+            {
+                'type': {
+                    'encoding': 'pickle',
+                    'description': "<class 'd3m.metadata.hyperparams.Hyperparameter'>",
+                    'value': 'gANjZDNtLm1ldGFkYXRhLmh5cGVycGFyYW1zCkh5cGVycGFyYW1ldGVyCnEALg==',
+                },
+                'default': {
+                    'encoding': 'pickle',
+                    'description': 'd3m.primitives.test.LossPrimitive(hyperparams=Hyperparams({}), random_seed=0)',
+                    # When you run this test stand-alone.
+                    'value': 'gANjX19tYWluX18KTG9zc1ByaW1pdGl2ZQpxACmBcQF9cQIoWAsAAABjb25zdHJ1Y3RvcnEDfXEEKFgLAAAAaHlwZXJwYXJhbXNxBWNfX21haW5fXwpIeXBlcnBhcmFtcwpxBimBcQd9cQhiWAsAAAByYW5kb21fc2VlZHEJSwBYEQAAAGRvY2tlcl9jb250YWluZXJzcQp9cQtYBwAAAHZvbHVtZXNxDH1xDVgTAAAAdGVtcG9yYXJ5X2RpcmVjdG9yeXEOTnVYBgAAAHBhcmFtc3EPTnViLg==',
+                },
+                'structural_type': {
+                    'encoding': 'pickle',
+                    'description': "<class 'd3m.primitive_interfaces.base.PrimitiveBase'>",
+                    'value': 'gANjZDNtLnByaW1pdGl2ZV9pbnRlcmZhY2VzLmJhc2UKUHJpbWl0aXZlQmFzZQpxAC4=',
+                },
+                'semantic_types': ['https://metadata.datadrivendiscovery.org/types/TuningParameter'],
+            },
+            {
+                'type': {
+                    'encoding': 'pickle',
+                    'description': "<class 'd3m.metadata.hyperparams.Hyperparameter'>",
+                    'value': 'gANjZDNtLm1ldGFkYXRhLmh5cGVycGFyYW1zCkh5cGVycGFyYW1ldGVyCnEALg==',
+                },
+                'default': {
+                    'encoding': 'pickle',
+                    'description': 'd3m.primitives.test.LossPrimitive(hyperparams=Hyperparams({}), random_seed=0)',
+                    # When you run this test as part of test suite.
+                    'value': 'gANjdGVzdF9waXBlbGluZQpMb3NzUHJpbWl0aXZlCnEAKYFxAX1xAihYCwAAAGNvbnN0cnVjdG9ycQN9cQQoWAsAAABoeXBlcnBhcmFtc3EFY3Rlc3RfcGlwZWxpbmUKSHlwZXJwYXJhbXMKcQYpgXEHfXEIYlgLAAAAcmFuZG9tX3NlZWRxCUsAWBEAAABkb2NrZXJfY29udGFpbmVyc3EKfXELWAcAAAB2b2x1bWVzcQx9cQ1YEwAAAHRlbXBvcmFyeV9kaXJlY3RvcnlxDk51WAYAAABwYXJhbXNxD051Yi4=',
+                },
+                'structural_type': {
+                    'encoding': 'pickle',
+                    'description': "<class 'd3m.primitive_interfaces.base.PrimitiveBase'>",
+                    'value': 'gANjZDNtLnByaW1pdGl2ZV9pbnRlcmZhY2VzLmJhc2UKUHJpbWl0aXZlQmFzZQpxAC4=',
+                },
+                'semantic_types': ['https://metadata.datadrivendiscovery.org/types/TuningParameter'],
+            },
+        ])
 
     def test_pipeline_digest_mismatch(self):
         logger = logging.getLogger('d3m.metadata.pipeline')
@@ -940,6 +1058,93 @@ class TestPipeline(unittest.TestCase):
                 }
             """.replace('__SUM_DIGEST__', SumPrimitive.metadata.query()['digest']), resolver=Resolver()).check()
 
+    def test_primitive_input_checks(self):
+        with self.assertRaises(exceptions.InvalidArgumentValueError):
+            pipeline.Pipeline.from_json("""
+                {
+                  "id": "90e99f5b-fdec-4840-b5c3-dcdbd22eaa5e",
+                  "schema": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
+                  "created": "2020-02-28T09:42:27.443844Z",
+                  "name": "Test pipeline",
+                  "description": "Just a test pipeline",
+                  "inputs": [
+                    {}
+                  ],
+                  "outputs": [
+                    {
+                      "data": "steps.0.produce"
+                    }
+                  ],
+                  "steps": [
+                    {
+                      "type": "PRIMITIVE",
+                      "primitive": {
+                        "id": "e42e6f17-77cc-4611-8cca-bba36a46e806",
+                        "version": "0.1.0",
+                        "python_path": "d3m.primitives.test.PipelineTestPrimitive",
+                        "name": "Pipeline Test Primitive"
+                      },
+                      "arguments": {
+                        "inputs": {
+                          "type": "CONTAINER",
+                          "data": "inputs.0"
+                        }
+                      },
+                      "outputs": [
+                        {
+                          "id": "produce"
+                        }
+                      ]
+                    }
+                  ]
+                }
+            """, resolver=Resolver()).check(standard_pipeline=False)
+
+        pipeline.Pipeline.from_json("""
+            {
+              "id": "90e99f5b-fdec-4840-b5c3-dcdbd22eaa5e",
+              "schema": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
+              "created": "2020-02-28T09:42:27.443844Z",
+              "name": "Test pipeline",
+              "description": "Just a test pipeline",
+              "inputs": [
+                {},
+                {}
+              ],
+              "outputs": [
+                {
+                  "data": "steps.0.produce"
+                }
+              ],
+              "steps": [
+                {
+                  "type": "PRIMITIVE",
+                  "primitive": {
+                    "id": "e42e6f17-77cc-4611-8cca-bba36a46e806",
+                    "version": "0.1.0",
+                    "python_path": "d3m.primitives.test.PipelineTestPrimitive",
+                    "name": "Pipeline Test Primitive"
+                  },
+                  "arguments": {
+                    "inputs": {
+                      "type": "CONTAINER",
+                      "data": "inputs.0"
+                    },
+                    "extra_data": {
+                      "type": "CONTAINER",
+                      "data": "inputs.1"
+                    }
+                  },
+                  "outputs": [
+                    {
+                      "id": "produce"
+                    }
+                  ]
+                }
+              ]
+            }
+        """, resolver=Resolver()).check(standard_pipeline=False)
+
     def test_list_of_columns(self):
         pipeline.Pipeline.from_json("""
             {
@@ -1059,10 +1264,13 @@ class TestPipeline(unittest.TestCase):
                 return True
 
         def _get_special_hyperparam():
+            # Using typing.Union[typing.Any, None] and not just typing.Any because
+            # with typing.Any we try to guess the type from the default value.
+            # We do not use object because of: https://github.com/Stewori/pytypes/issues/103#issuecomment-932819028
             if use_set_hyperparamaters:
-                h = hyperparams.Set(hyperparams.Hyperparameter[object](None), ())
+                h = hyperparams.Set(hyperparams.Hyperparameter[typing.Union[typing.Any, None]](None), ())
             else:
-                h = hyperparams.Hyperparameter[object](None)
+                h = hyperparams.Hyperparameter[typing.Union[typing.Any, None]](None)
             h.value_from_json_structure = lambda x: x
             return h
 
@@ -1073,8 +1281,8 @@ class TestPipeline(unittest.TestCase):
             def query(self):
                 hparams = hyperparams.Hyperparams()
                 hparams.configuration = _defaultdict(_get_special_hyperparam)
-                arguments = _defaultdict(lambda: {'kind': metadata_base.PrimitiveArgumentKind.PIPELINE})
-                produces = _defaultdict(lambda: {'kind': metadata_base.PrimitiveMethodKind.PRODUCE})
+                arguments = _defaultdict(lambda: {'kind': metadata_base.PrimitiveArgumentKind.PIPELINE, 'arguments': {}})
+                produces = _defaultdict(lambda: {'kind': metadata_base.PrimitiveMethodKind.PRODUCE, 'arguments': {}})
                 return {
                     'id': primitive_id,
                     'primitive_code': {
@@ -1420,6 +1628,27 @@ class TestPipeline(unittest.TestCase):
 
         self.assertTrue(pipeline_set_hyperparams_1.equals(pipeline_set_hyperparams_3))
         self.assertFalse(pipeline_set_hyperparams_1.equals(pipeline_set_hyperparams_3, strict_order=True))
+
+        # Test new hyperparameter types like SortedSet, List, SortedList and bounded subtypes.
+        def new_hyperparameter_types_builder(**values):
+            p = pipeline.Pipeline.from_json(TEST_PIPELINE_3, resolver=Resolver())
+            for k, v in values.items():
+                p.steps[0].add_hyperparameter(k, 'VALUE', v)
+            return p
+
+        pipeline_new_hyperparams_1 = new_hyperparameter_types_builder(a=[1, 2, 3, 0, 4], b=['a', 'b', 'c', 'd', 'e'], c=['a', 'b', 'c'], d=11)
+        pipeline_new_hyperparams_2 = new_hyperparameter_types_builder(a=[1, 2, 3, 0, 4], b=['a', 'b', 'c', 'd', 'e'], c=['a', 'b', 'c'], d=11)
+        pipeline_new_hyperparams_3 = new_hyperparameter_types_builder(a=[1, 2, 3, 0, 4, 2], b=['a', 'b', 'c', 'd', 'e'], c=['a', 'b', 'c'], d=11)
+        pipeline_new_hyperparams_4 = new_hyperparameter_types_builder(a=[1, 2, 3, 0, 4], b=['a', 'b'], c=['a', 'b', 'c'], d=11)
+        pipeline_new_hyperparams_5 = new_hyperparameter_types_builder(a=[1, 2, 3, 0, 4], b=['a', 'b', 'c', 'd', 'e'], c=['a', 'b', 'c', 'e'], d=11)
+        pipeline_new_hyperparams_6 = new_hyperparameter_types_builder(a=[1, 2, 3, 0, 4], b=['a', 'b', 'c', 'd', 'e'], c=['a', 'b', 'c', 'e'], d=14)
+
+        self.assertTrue(pipeline_new_hyperparams_1.equals(pipeline_new_hyperparams_1))
+        self.assertTrue(pipeline_new_hyperparams_1.equals(pipeline_new_hyperparams_2))
+        self.assertFalse(pipeline_new_hyperparams_1.equals(pipeline_new_hyperparams_3))
+        self.assertFalse(pipeline_new_hyperparams_1.equals(pipeline_new_hyperparams_4))
+        self.assertFalse(pipeline_new_hyperparams_1.equals(pipeline_new_hyperparams_5))
+        self.assertFalse(pipeline_new_hyperparams_1.equals(pipeline_new_hyperparams_6))
 
     def test_pipeline_isomorphism_check_control_only(self):
         # Pipelines with different tuning hyperparameters should still be equal with

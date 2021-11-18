@@ -3,7 +3,7 @@ import os.path
 import sys
 from setuptools import setup, find_packages
 
-PACKAGE_NAME = 'tamu_d3m'
+PACKAGE_NAME = 'd3m'
 MINIMUM_PYTHON_VERSION = 3, 6
 
 
@@ -15,7 +15,7 @@ def check_python_version():
 
 def read_package_variable(key):
     """Read the value of a variable from the package without importing."""
-    module_path = os.path.join('d3m', '__init__.py')
+    module_path = os.path.join(PACKAGE_NAME, '__init__.py')
     with open(module_path) as module:
         for line in module:
             parts = line.strip().split(' ')
@@ -42,45 +42,47 @@ author = read_package_variable('__author__')
 setup(
     name=PACKAGE_NAME,
     version=version,
-    description=version,
+    description=description,
     author=author,
     packages=find_packages(exclude=['contrib', 'docs', 'site', 'tests*']),
-    package_data={'d3m': ['metadata/schemas/*/*.json', 'contrib/pipelines/*']},
-    data_files=[('./', ['./entry_points.ini'])],
+    package_data={PACKAGE_NAME: ['metadata/schemas/*/*.json', 'contrib/pipelines/*.yml', 'py.typed']},
     install_requires=[
-        'scikit-learn[alldeps]>=0.20.3,<=0.22.2.post1',
-        'pytypes==1.0b5',
+        'scikit-learn>=0.21.3,<=0.24.2',
+        'pytypes @ git+https://github.com/Stewori/pytypes.git@121f9c34dbd68a1743ef780b0058ffabde790ee3',
         'frozendict==1.2',
-        'numpy>=1.15.4,<=1.18.2',
-        'jsonschema>=3.0.2,<=3.2.0',
-        'requests>=2.19.1,<=2.23.0',
-        'strict-rfc3339==0.7',
-        'rfc3987==1.3.8',
+        'numpy>=1.16.6,<=1.21.2',
+        'jsonschema>=3.0.2,<=4.0.1',
+        'requests>=2.19.1,<=2.26.0',
+        'rfc3339-validator>=0.1,<0.2',
+        'rfc3986-validator>=0.1,<0.2',
         'webcolors>=1.8.1,<=1.11.1',
-        'dateparser>=0.7.0,<=0.7.2',
-        'python-dateutil==2.8.1',
-        'pandas>=0.23.4,<=1.0.3',
-        'typing-inspect==0.5.0',
-        'GitPython==3.1.0',
-        'jsonpath-ng==1.4.3',
-        'custom-inherit>=2.2.0,<=2.2.2',
-        'PyYAML>=5.1,<=5.3',
-        'pyarrow>=0.15.1,<=0.16.0',
+        'dateparser>=0.7.0,<=1.1.0',
+        'python-dateutil>=2.8.1,<=2.8.2',
+        'pandas>=1.1.3,<=1.3.4',
+        'typing-inspect==0.7.1',
+        'GitPython>=3.1.0,<=3.1.24',
+        'jsonpath-ng>=1.4.3,<=1.5.3',
+        'custom-inherit>=2.2.0,<=2.3.2',
+        'PyYAML>=5.1,<=5.4.1',
         'gputil>=1.3.0,<=1.4.0',
-        'pyrsistent>=0.14.11,<=0.15.7',
-        'scipy>=1.2.1,<=1.4.1',
-        'openml==0.10.1',
+        'pyrsistent>=0.14.11,<=0.18.0',
+        'scipy>=1.2.1,<=1.7.1',
+        'openml==0.11.0',
     ],
-    tests_require=[
-        'asv==0.3.1',
-        'docker[tls]==2.7',
-    ],
+    extras_require={
+        'tests': [
+            'asv==0.4.2',
+            'docker[tls]==2.7',
+            'pypiwin32==220 ; sys_platform=="win32"',
+        ],
+    },
     entry_points=read_entry_points(),
-    url='https://github.com/tods-doc/tamu_d3m',
+    url='https://gitlab.com/datadrivendiscovery/d3m',
     long_description=read_readme(),
     long_description_content_type='text/markdown',
     license='Apache-2.0',
     classifiers=[
           'License :: OSI Approved :: Apache Software License',
     ],
+    zip_safe=False,
 )

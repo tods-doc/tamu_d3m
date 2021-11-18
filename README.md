@@ -7,8 +7,6 @@ It contains standard interfaces, reference implementations, and utility implemen
 
 This package works with Python 3.6 and pip 19+. You need to have the following packages installed on the system (for Debian/Ubuntu):
 
-* `libssl-dev`
-* `libcurl4-openssl-dev`
 * `libyaml-dev`
 
 You can install latest stable version from [PyPI](https://pypi.org/):
@@ -35,7 +33,7 @@ See [HISTORY.md](./HISTORY.md) for summary of changes to this package.
 
 ## Documentation
 
-Documentation for the package is available at [https://docs.datadrivendiscovery.org/](https://docs.datadrivendiscovery.org/).
+Documentation for the package is available at [https://datadrivendiscovery.org/](https://datadrivendiscovery.org/).
 
 ## Contributing
 
@@ -46,7 +44,7 @@ See [CODE_STYLE.md](./CODE_STYLE.md) for our coding style and contribution guide
 `master` branch contains latest stable release of the package.
 `devel` branch is a staging branch for the next release.
 
-Releases are [tagged](https://gitlab.com/datadrivendiscovery/d3m/tags).
+Releases are [tagged](https://gitlab.com/datadrivendiscovery/d3m/-/tags).
 
 ## About Data Driven Discovery Program
 

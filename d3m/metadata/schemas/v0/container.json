@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/container.json",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/container.json",
   "title": "Container metadata",
   "description": "Schema for metadata for the container (value passed between primitives).",
   "type": "object",

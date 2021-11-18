@@ -661,11 +661,13 @@ class TestMetadata(unittest.TestCase):
             base.Metadata().update((None,), {'value': 'test'})
 
     def test_data(self):
+        self.maxDiff = None
+
         data = container.Dataset({
             '0': container.ndarray(numpy.array([
                 [1, 2, 3],
                 [4, 5, 6],
-            ])),
+            ], dtype=numpy.int64)),
         })
 
         md1 = base.DataMetadata()

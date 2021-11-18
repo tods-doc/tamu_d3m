@@ -1,4 +1,6 @@
-import numpy  # type: ignore
+import typing
+
+import numpy
 
 from d3m import container
 
@@ -18,6 +20,10 @@ Container = (
     container.ndarray, container.DataFrame,
     container.List, container.Dataset,
 )
+ContainerType = typing.Union[
+    container.ndarray, container.DataFrame,
+    container.List, container.Dataset,
+]
 
 # A tuple representing all standard data types. Data types are those which
 # can be contained inside container types.

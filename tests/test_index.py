@@ -72,7 +72,7 @@ class TestIndex(unittest.TestCase):
 
         try:
             distribution = pkg_resources.Distribution(__file__)
-            entry_point = pkg_resources.EntryPoint.parse('foo2.bar2.FooBar2Primitive = test_index:FooBar2Primitive', dist=distribution)
+            entry_point = pkg_resources.EntryPoint.parse('foo2.bar2.FooBar2Primitive = ' + __name__ + ':FooBar2Primitive', dist=distribution)
             distribution._ep_map = {'d3m.primitives': {'foo2.bar2.FooBar2Primitive': entry_point}}
             pkg_resources.working_set.add(distribution)
 
@@ -96,8 +96,8 @@ class TestIndex(unittest.TestCase):
             distribution = pkg_resources.Distribution(__file__)
             distribution._ep_map = {
                 'd3m.primitives': {
-                    'foo3.bar3': pkg_resources.EntryPoint.parse('foo3.bar3 = test_index:FooBar4Primitive', dist=distribution),
-                    'foo3.bar3.FooBar3Primitive': pkg_resources.EntryPoint.parse('foo3.bar3.FooBar3Primitive = test_index:FooBar3Primitive', dist=distribution),
+                    'foo3.bar3': pkg_resources.EntryPoint.parse('foo3.bar3 = ' + __name__ + ':FooBar4Primitive', dist=distribution),
+                    'foo3.bar3.FooBar3Primitive': pkg_resources.EntryPoint.parse('foo3.bar3.FooBar3Primitive = ' + __name__ + ':FooBar3Primitive', dist=distribution),
                 },
             }
             pkg_resources.working_set.add(distribution)

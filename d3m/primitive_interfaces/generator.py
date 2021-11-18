@@ -59,4 +59,4 @@ class GeneratorPrimitiveBase(PrimitiveBase[container.List, Outputs, Params, Hype
         A dict of values for each produce method wrapped inside ``MultiCallResult``.
         """
 
-        return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, outputs=outputs)  # type: ignore
+        return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, outputs=outputs)

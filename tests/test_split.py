@@ -13,7 +13,7 @@ sys.path.insert(0, COMMON_PRIMITIVES_TESTS_DIR)
 import test_train_score_split
 
 
-# We just reuse existings tests. This allows us to test the high-level data splitting class.
+# We just reuse existing tests. This allows us to test the high-level data splitting class.
 class TrainScoreDatasetSplitPrimitiveTestCase(test_train_score_split.TrainScoreDatasetSplitPrimitiveTestCase):
     pass
 

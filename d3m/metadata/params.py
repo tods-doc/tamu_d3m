@@ -75,20 +75,11 @@ class Params(dict, metaclass=ParamsMeta):
         if len(extra):
             raise exceptions.InvalidArgumentValueError("Additional parameters are specified: {extra}".format(extra=extra))
 
-        for name, value in values.items():
-            value_type = self.__params_items__[name]  # type: ignore
-            if not utils.is_instance(value, value_type):
-                raise exceptions.InvalidArgumentTypeError("Value '{value}' for parameter '{name}' is not an instance of the type: {value_type}".format(value=value, name=name, value_type=value_type))
-
         super().__init__(values)
 
     def __setitem__(self, key, value):  # type: ignore
         if key not in self.__params_items__:
             raise ValueError("Additional parameter is specified: {key}".format(key=key))
-
-        value_type = self.__params_items__[key]
-        if not utils.is_instance(value, value_type):
-            raise TypeError("Value '{value}' for parameter '{name}' is not an instance of the type: {value_type}".format(value=value, name=key, value_type=value_type))
 
         return super().__setitem__(key, value)
 
@@ -108,10 +99,6 @@ class Params(dict, metaclass=ParamsMeta):
         if key not in self.__params_items__:
             raise ValueError("Additional parameter is specified: {key}".format(key=key))
 
-        default_type = self.__params_items__[key]
-        if not utils.is_instance(default, default_type):
-            raise TypeError("Value '{value}' for parameter '{name}' is not an instance of the type: {value_type}".format(value=default, name=key, value_type=default_type))
-
         return super().setdefault(key, default)
 
     def update(self, other: typing.Dict[str, typing.Any] = None, **values: typing.Any) -> None:  # type: ignore
@@ -127,12 +114,13 @@ class Params(dict, metaclass=ParamsMeta):
         if len(extra):
             raise ValueError("Additional parameters are specified: {extra}".format(extra=extra))
 
-        for name, value in values.items():
+        super().update(values)
+
+    def validate(self) -> None:
+        for name, value in self.items():
             value_type = self.__params_items__[name]  # type: ignore
             if not utils.is_instance(value, value_type):
                 raise TypeError("Value '{value}' for parameter '{name}' is not an instance of the type: {value_type}".format(value=value, name=name, value_type=value_type))
-
-        super().update(values)
 
     def __repr__(self) -> str:
         return '{class_name}({super})'.format(class_name=type(self).__name__, super=super().__repr__())

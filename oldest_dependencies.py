@@ -6,7 +6,7 @@ package = pkg_resources.working_set.by_key['d3m']
 
 oldest_dependencies = []
 
-for requirement in package.requires():
+for requirement in package.requires(package.extras):
     dependency = requirement.project_name
     if requirement.extras:
         dependency += '[' + ','.join(requirement.extras) + ']'
@@ -15,11 +15,15 @@ for requirement in package.requires():
             if len(requirement.specs) != 1:
                 raise ValueError('Invalid dependency: {requirement}'.format(requirement=requirement))
             dependency += '==' + version
+            break
         elif comparator == '<=':
             if len(requirement.specs) != 2:
                 raise ValueError('Invalid dependency: {requirement}'.format(requirement=requirement))
         elif comparator == '>=':
             dependency += '==' + version
+            break
+    else:
+        continue
 
     oldest_dependencies.append(dependency)
 

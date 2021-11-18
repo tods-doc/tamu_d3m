@@ -17,11 +17,11 @@ __all__ = (
 )
 
 
-Inputs = typing.TypeVar('Inputs', bound=typing.Union[types.Container])  # type: ignore
-Outputs = typing.TypeVar('Outputs', bound=typing.Union[types.Container])  # type: ignore
+Inputs = typing.TypeVar('Inputs', bound=types.ContainerType)
+Outputs = typing.TypeVar('Outputs', bound=types.ContainerType)
 # This type parameter is optional and can be set to None.
 # See "TransformerPrimitiveBase" for an example.
-Params = typing.TypeVar('Params', bound=params.Params)
+Params = typing.TypeVar('Params', bound=typing.Optional[params.Params])
 Hyperparams = typing.TypeVar('Hyperparams', bound=hyperparams.Hyperparams)
 Module = typing.TypeVar('Module')
 
@@ -129,17 +129,11 @@ class DockerContainer(typing.NamedTuple):
     """
     A tuple suitable to describe connection information necessary to connect
     to exposed ports of a running Docker container.
-
-    Attributes
-    ----------
-    address:
-        An address at which the Docker container is available.
-    ports:
-        Mapping between image's exposed ports and real ports. E.g.,
-        ``{'80/tcp': 80}``.
     """
 
+    #: An address at which the Docker container is available.
     address: str
+    #: Mapping between image's exposed ports and real ports. E.g., ``{'80/tcp': 80}``.
     ports: typing.Dict[str, int]
 
 
@@ -231,46 +225,36 @@ class PrimitiveBase(typing.Generic[Inputs, Outputs, Params, Hyperparams], metacl
     using the ``extra`` argument to the logger calls.
 
     Subclasses of this class allow functional compositionality.
-
-    Attributes
-    ----------
-    metadata:
-        Primitive's metadata. Available as a class attribute.
-    logger:
-        Primitive's logger. Available as a class attribute.
-    hyperparams:
-        Hyperparams passed to the constructor.
-    random_seed:
-        Random seed passed to the constructor.
-    docker_containers:
-        A dict mapping Docker image keys from primitive's metadata to (named) tuples containing
-        container's address under which the container is accessible by the primitive, and a
-        dict mapping exposed ports to ports on that address.
-    volumes:
-        A dict mapping volume keys from primitive's metadata to file and directory paths
-        where downloaded and extracted files are available to the primitive.
-    temporary_directory:
-        An absolute path to a temporary directory a primitive can use to store any files
-        for the duration of the current pipeline run phase. Directory is automatically
-        cleaned up after the current pipeline run phase finishes.
     """
 
-    # Primitive's metadata (annotation) should be put on "metadata' attribute to provide
-    # all fields (which cannot be determined automatically) inside the code. In this way metadata
-    # is close to the code and it is easier for consumers to make sure metadata they are using
-    # is really matching the code they are using. PrimitiveMetadata class will automatically
-    # extract additional metadata and update itself with metadata about code and other things
-    # it can extract automatically.
-    metadata: typing.ClassVar[metadata_base.PrimitiveMetadata] = None
+    #: Primitive's metadata. Available as a class attribute.
+    #: Primitive author should provide
+    #: all fields which cannot be determined automatically inside the code. In this way metadata
+    #: is close to the code and it is easier for consumers to make sure metadata they are using
+    #: is really matching the code they are using. PrimitiveMetadata class updates
+    #: itself with metadata about code and other things
+    #: it can extract automatically.
+    metadata: typing.ClassVar[metadata_base.PrimitiveMetadata]
 
-    # This gets automatically set to primitive's logger in metaclass.
-    logger: typing.ClassVar[logging.Logger] = None
+    #: Primitive's logger. Available as a class attribute.
+    #: This gets automatically set to primitive's logger in metaclass.
+    logger: typing.ClassVar[logging.Logger]
 
+    #: Hyperparams passed to the constructor.
     hyperparams: Hyperparams
+    #: Random seed passed to the constructor.
     random_seed: int
+    #: A dict mapping Docker image keys from primitive's metadata to (named) tuples containing
+    #: container's address under which the container is accessible by the primitive, and a
+    #: dict mapping exposed ports to ports on that address.
     docker_containers: typing.Dict[str, DockerContainer]
+    #: A dict mapping volume keys from primitive's metadata to file and directory paths
+    #: where downloaded and extracted files are available to the primitive.
     volumes: typing.Dict[str, str]
-    temporary_directory: str
+    #: An absolute path to a temporary directory a primitive can use to store any files
+    #: for the duration of the current pipeline run phase. Directory is automatically
+    #: cleaned up after the current pipeline run phase finishes.
+    temporary_directory: typing.Optional[str]
 
     def __init__(self, *, hyperparams: Hyperparams, random_seed: int = 0,
                  docker_containers: typing.Dict[str, DockerContainer] = None,
@@ -413,7 +397,8 @@ class PrimitiveBase(typing.Generic[Inputs, Outputs, Params, Hyperparams], metacl
         If any additional method arguments are added to primitive's produce method(s), they have
         to be added to this method as well. This method should accept an union of all arguments
         accepted by primitive's produce method(s) and then use them accordingly when computing
-        results.
+        results. Despite accepting all arguments they can be passed as ``None`` by the caller
+        when they are not needed by any of the produce methods in ``produce_methods``.
 
         The default implementation of this method just calls all produce methods listed in
         ``produce_methods`` in order and is potentially inefficient.
@@ -440,7 +425,7 @@ class PrimitiveBase(typing.Generic[Inputs, Outputs, Params, Hyperparams], metacl
 
         return self._multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs)
 
-    def _multi_produce(self, *, produce_methods: typing.Sequence[str], timeout: float = None, iterations: int = None, **kwargs: typing.Dict[str, typing.Any]) -> MultiCallResult:
+    def _multi_produce(self, *, produce_methods: typing.Sequence[str], timeout: float = None, iterations: int = None, **kwargs: typing.Any) -> MultiCallResult:
         """
         We do not want a public API to use ``kwargs``, but such implementation allows easier subclassing and reuse
         of a default implementation. Do not call directly.
@@ -503,7 +488,8 @@ class PrimitiveBase(typing.Generic[Inputs, Outputs, Params, Hyperparams], metacl
         or produce method(s), or removed from them, they have to be added to or removed from this
         method as well. This method should accept an union of all arguments accepted by primitive's
         ``set_training_data`` method and produce method(s) and then use them accordingly when
-        computing results.
+        computing results. Despite accepting all arguments they can be passed as ``None`` by the caller
+        when they are not needed by any of the produce methods in ``produce_methods`` and ``set_training_data``.
 
         The default implementation of this method just calls first ``set_training_data`` method,
         ``fit`` method, and all produce methods listed in ``produce_methods`` in order and is
@@ -531,7 +517,7 @@ class PrimitiveBase(typing.Generic[Inputs, Outputs, Params, Hyperparams], metacl
 
         return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, outputs=outputs)
 
-    def _fit_multi_produce(self, *, produce_methods: typing.Sequence[str], timeout: float = None, iterations: int = None, **kwargs: typing.Dict[str, typing.Any]) -> MultiCallResult:
+    def _fit_multi_produce(self, *, produce_methods: typing.Sequence[str], timeout: float = None, iterations: int = None, **kwargs: typing.Any) -> MultiCallResult:
         """
         We do not want a public API to use ``kwargs``, but such implementation allows easier subclassing and reuse
         of a default implementation. Do not call directly.
@@ -545,7 +531,7 @@ class PrimitiveBase(typing.Generic[Inputs, Outputs, Params, Hyperparams], metacl
         arguments = {name: value for name, value in kwargs.items() if name in expected_arguments}
 
         start = time.perf_counter()
-        self.set_training_data(**arguments)  # type: ignore
+        self.set_training_data(**arguments)
         delta = time.perf_counter() - start
 
         # Decrease the amount of time available to other calls. This delegates responsibility
@@ -1275,7 +1261,7 @@ def inputs_across_samples(func: typing.Callable = None, inputs: typing.Sequence[
         return func
 
     else:
-        def decorator(f):
+        def decorator(f: typing.Callable) -> typing.Callable:
             # We do not have to call "functool.update_wrapper" or something similar
             # because we are in fact returning the same function "f", just with
             # set "__inputs_across_samples__" attribute

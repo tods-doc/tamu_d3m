@@ -2,9 +2,9 @@ import abc
 import itertools
 import typing
 
-import numpy  # type: ignore
-import pandas  # type: ignore
-from sklearn import metrics, preprocessing  # type: ignore
+import numpy
+import pandas
+from sklearn import metrics, preprocessing
 
 from d3m import container, exceptions, utils
 from d3m.metadata import problem
@@ -12,7 +12,7 @@ from d3m.metadata import problem
 __ALL__ = ('class_map',)
 
 INDEX_COLUMN = 'd3mIndex'
-CONFIDENCE_COLUMN = 'confidence'
+SCORE_COLUMN = 'confidence'
 RANK_COLUMN = 'rank'
 EMPTY_VALUES = {numpy.nan, float('NaN'), ""}
 
@@ -117,11 +117,11 @@ class Metric(metaclass=utils.AbstractMetaclass):
 
         dataframe = dataframe.drop(columns=[INDEX_COLUMN])
 
-        confidence_columns = columns.count(CONFIDENCE_COLUMN)
-        if confidence_columns > 1:
-            raise exceptions.InvalidArgumentValueError(f"Predictions contain multiple confidence columns '{CONFIDENCE_COLUMN}': {confidence_columns}")
-        elif confidence_columns:
-            dataframe = dataframe.drop(columns=[CONFIDENCE_COLUMN])
+        score_columns = columns.count(SCORE_COLUMN)
+        if score_columns > 1:
+            raise exceptions.InvalidArgumentValueError(f"Predictions contain multiple score columns '{SCORE_COLUMN}': {score_columns}")
+        elif score_columns:
+            dataframe = dataframe.drop(columns=[SCORE_COLUMN])
 
         rank_columns = columns.count(RANK_COLUMN)
         if rank_columns > 1:
@@ -151,20 +151,20 @@ class Metric(metaclass=utils.AbstractMetaclass):
         return dataframe.loc[:, [INDEX_COLUMN]]
 
     @classmethod
-    def get_confidence_column(cls, dataframe: pandas.DataFrame) -> pandas.DataFrame:
+    def get_score_column(cls, dataframe: pandas.DataFrame) -> pandas.DataFrame:
         """
-        Returns only confidence column present in ``dataframe``.
+        Returns only score column present in ``dataframe``.
         """
 
         columns = list(dataframe.columns)
 
-        confidence_columns = columns.count(CONFIDENCE_COLUMN)
-        if confidence_columns < 1:
-            raise exceptions.InvalidArgumentValueError(f"Confidence column '{CONFIDENCE_COLUMN}' is missing in predictions.")
-        elif confidence_columns > 1:
-            raise exceptions.InvalidArgumentValueError(f"Predictions contain multiple confidence columns '{CONFIDENCE_COLUMN}': {confidence_columns}")
+        score_columns = columns.count(SCORE_COLUMN)
+        if score_columns < 1:
+            raise exceptions.InvalidArgumentValueError(f"Score column '{SCORE_COLUMN}' is missing in predictions.")
+        elif score_columns > 1:
+            raise exceptions.InvalidArgumentValueError(f"Predictions contain multiple score columns '{SCORE_COLUMN}': {score_columns}")
 
-        return dataframe.loc[:, [CONFIDENCE_COLUMN]]
+        return dataframe.loc[:, [SCORE_COLUMN]]
 
     @classmethod
     def get_rank_column(cls, dataframe: pandas.DataFrame) -> pandas.DataFrame:
@@ -187,7 +187,8 @@ class Metric(metaclass=utils.AbstractMetaclass):
         """
         For every non-index column, convert all values in rows belonging to the
         same index to one row with value being a tuple of values. The order of values
-        in a tuple follows the order of original rows and is preserved between columns.
+        in a tuple follows the order of original rows. Missing/empty values are removed
+        and not included in the tuple.
         """
 
         columns_set = set(dataframe.columns)
@@ -198,21 +199,13 @@ class Metric(metaclass=utils.AbstractMetaclass):
         if INDEX_COLUMN not in dataframe.columns:
             raise exceptions.InvalidArgumentValueError(f"Index column '{INDEX_COLUMN}' is missing.")
 
-        columns_without_index = [column_name for column_name in dataframe.columns if column_name != INDEX_COLUMN]
-
-        rows = {}
-        for index_value in dataframe.loc[:, INDEX_COLUMN].unique():
-            rows[index_value] = {
-                # When we have multiple columns, some of them might not have values for all rows,
-                # and there are more rows because some other column needs them. In such case
-                # the column with less values should put an empty value in those extra rows
-                # (generally an empty string).
-                column_name: tuple(v for v in dataframe.loc[dataframe[INDEX_COLUMN] == index_value, column_name] if not cls.is_empty_value(v))
-                for column_name in columns_without_index
-            }
-
-        output = pandas.DataFrame.from_dict(rows, orient='index', columns=columns_without_index)
-        output.index.set_names([INDEX_COLUMN], inplace=True)
+        # When we have multiple columns, some of them might not have values for all rows with same index,
+        # and there are more rows because some other column needs them. In such case the column with less
+        # values should have an empty value in those extra rows (generally an empty string). When
+        # converting to tuples we check for those empty values and remove (skip) them.
+        output = dataframe.groupby(INDEX_COLUMN).aggregate(
+            lambda x: tuple(v for v in x if not cls.is_empty_value(v))
+        )
         output.reset_index(inplace=True)
 
         return output
@@ -229,19 +222,19 @@ class Metric(metaclass=utils.AbstractMetaclass):
         given sample.
         """
 
-        mlb = preprocessing.MultiLabelBinarizer(all_labels)
+        mlb = preprocessing.MultiLabelBinarizer(classes=all_labels)
         encoded = mlb.fit_transform(series)
 
         return encoded
 
     @classmethod
-    def one_hot_encode_confidence(cls, series: pandas.Series, all_labels: typing.Sequence) -> pandas.DataFrame:
+    def one_hot_encode_score(cls, series: pandas.Series, all_labels: typing.Sequence) -> pandas.DataFrame:
         """
-        Returns one-hot-encoded dataframe where the columns are the labels of the confidence column,
-        which is provided as a series of tuples, where each tuple contains confidence for all labels
+        Returns one-hot-encoded dataframe where the columns are the labels of the score column,
+        which is provided as a series of tuples, where each tuple contains score for all labels
         of a given sample, ordered in order specified by ``labels``.
 
-        Returned dataframe has instead of 0 or 1, a confidence value itself.
+        Returned dataframe has instead of 0 or 1, a score value itself.
         """
 
         encoded = series.apply(pandas.Series)
@@ -536,7 +529,7 @@ class PrecisionAtTopKMetric(Metric):
         truth_targets = truth_targets[0:self.k]
         predictions_targets = predictions_targets[0:self.k]
 
-        return numpy.float(len(numpy.intersect1d(truth_targets, predictions_targets))) / self.k
+        return float(len(numpy.intersect1d(truth_targets, predictions_targets))) / self.k
 
 
 class ObjectDetectionAveragePrecisionMetric(Metric):
@@ -602,11 +595,11 @@ class ObjectDetectionAveragePrecisionMetric(Metric):
          following format:
             [image_name, x_min, y_min, x_min, y_max, x_max, y_max, x_max, y_min].
         y_pred: list
-         List of bounding box polygons with their corresponding confidence scores. Each
+         List of bounding box polygons with their corresponding scores. Each
          polygon is represented as a list of vertices, starting in the upper-left corner
          going counter-clockwise. Since in this case, the polygons are rectangles, they
          will have the following format:
-            [image_name, x_min, y_min, x_min, y_max, x_max, y_max, x_max, y_min, confidence_score].
+            [image_name, x_min, y_min, x_min, y_max, x_max, y_max, x_max, y_min, score].
         Returns:
         --------
         ap: float
@@ -696,21 +689,21 @@ class ObjectDetectionAveragePrecisionMetric(Metric):
         BP = numpy.array([[float(z) for z in x[1:-1]] for x in y_pred])
         BB = numpy.array([self._convert_bounding_polygon_to_box_coords(x) for x in BP])
 
-        confidence = numpy.array([float(x[-1]) for x in y_pred])
-        boxes_w_confidences_list = numpy.hstack((BB, -1 * confidence[:, None]))
-        boxes_w_confidences = numpy.empty(
-            (boxes_w_confidences_list.shape[0],),
+        score = numpy.array([float(x[-1]) for x in y_pred])
+        boxes_w_scores_list = numpy.hstack((BB, -1 * score[:, None]))
+        boxes_w_scores = numpy.empty(
+            (boxes_w_scores_list.shape[0],),
             dtype=[
                 ('x_min', float), ('y_min', float),
                 ('x_max', float), ('y_max', float),
                 ('confidence', float),
             ],
         )
-        boxes_w_confidences[:] = [tuple(i) for i in boxes_w_confidences_list]
+        boxes_w_scores[:] = [tuple(i) for i in boxes_w_scores_list]
 
-        # Sort by confidence.
+        # Sort by score.
         sorted_ind = numpy.argsort(
-            boxes_w_confidences, kind='mergesort',
+            boxes_w_scores, kind='mergesort',
             order=('confidence', 'x_min', 'y_min', 'x_max', 'y_max'))
         BB = BB[sorted_ind, :]
         image_ids = [image_ids[x] for x in sorted_ind]
@@ -723,7 +716,7 @@ class ObjectDetectionAveragePrecisionMetric(Metric):
             R = recs[image_ids[d]]
             bb = BB[d, :].astype(float)
             ovmax = -numpy.inf
-            BBGT = R['bbox'].astype(float)
+            BBGT = typing.cast(numpy.ndarray, R['bbox']).astype(float)
 
             if BBGT.size > 0:
                 # Compute overlaps.
@@ -746,9 +739,9 @@ class ObjectDetectionAveragePrecisionMetric(Metric):
                 jmax = numpy.argmax(overlaps)
 
             if ovmax > ovthresh:
-                if not R['det'][jmax]:
+                if not typing.cast(typing.List, R['det'])[jmax]:
                     tp[d] = 1.
-                    R['det'][jmax] = 1
+                    typing.cast(typing.List, R['det'])[jmax] = 1
                 else:
                     fp[d] = 1.
             else:
@@ -779,14 +772,14 @@ class ObjectDetectionAveragePrecisionMetric(Metric):
 
         predictions_index = self.get_index_column(predictions)
         predictions_targets = self.get_target_columns(predictions)
-        predictions_confidence = self.get_confidence_column(predictions)
+        predictions_score = self.get_score_column(predictions)
 
         if len(predictions_targets.columns) != 1:
             raise NotImplementedError("Support for multiple target columns is not yet implemented.")
 
         predictions_list = []
-        for i, (index, target, confidence) in enumerate(pandas.concat([predictions_index, predictions_targets, predictions_confidence], axis=1).itertuples(index=False, name=None)):
-            predictions_list.append([index] + [float(v) for v in target.split(',')] + [float(confidence)])
+        for i, (index, target, score) in enumerate(pandas.concat([predictions_index, predictions_targets, predictions_score], axis=1).itertuples(index=False, name=None)):
+            predictions_list.append([index] + [float(v) for v in target.split(',')] + [float(score)])
 
         return self._object_detection_average_precision(truth_list, predictions_list)
 
@@ -808,7 +801,7 @@ class _RocAucBase(Metric):
     def __init__(self, all_labels: AllLabels = None) -> None:
         self.all_labels = all_labels
 
-    def encode_confidence(self, truth: Truth, predictions: Predictions) -> typing.Tuple[pandas.DataFrame, pandas.DataFrame]:
+    def encode_score(self, truth: Truth, predictions: Predictions) -> typing.Tuple[pandas.DataFrame, pandas.DataFrame]:
         truth_vectorized = self.vectorize_columns(truth)
         predictions_vectorized = self.vectorize_columns(predictions)
 
@@ -816,7 +809,7 @@ class _RocAucBase(Metric):
 
         truth_targets = self.get_target_columns(truth_vectorized)
         predictions_targets = self.get_target_columns(predictions_vectorized)
-        predictions_confidence = self.get_confidence_column(predictions_vectorized).iloc[:, 0]
+        predictions_score = self.get_score_column(predictions_vectorized).iloc[:, 0]
 
         if len(truth_targets.columns) != 1:
             raise exceptions.InvalidArgumentValueError(f"Invalid number of target columns in truth: {len(truth_targets.columns)}")
@@ -858,35 +851,32 @@ class _RocAucBase(Metric):
         for i, prediction_targets in enumerate(predictions_target):
             prediction_targets_set = set(prediction_targets)
             prediction_targets_list = list(prediction_targets)
-            confidences = predictions_confidence[i]
+            scores = predictions_score[i]
 
             if len(prediction_targets_set) != len(prediction_targets_list):
                 raise exceptions.InvalidArgumentValueError(
                     f"Duplicate target values ({prediction_targets_list}) for sample '{predictions.loc[i, INDEX_COLUMN]}'."
                 )
-            if len(prediction_targets) != len(confidences):
+            if len(prediction_targets) != len(scores):
                 raise exceptions.InvalidArgumentValueError(
-                    f"The number of target values ({len(prediction_targets)}) does not match the number of confidence values ({len(confidences)}) for sample '{predictions.loc[i, INDEX_COLUMN]}'."
+                    f"The number of target values ({len(prediction_targets)}) does not match the number of score values ({len(scores)}) for sample '{predictions.loc[i, INDEX_COLUMN]}'."
                 )
 
             assert not (prediction_targets_set - all_labels_set), (prediction_targets_set, all_labels_set)
 
-            # We have to order confidences to match labels order.
-            # If any label is missing in confidences, we add it with confidence 0.
+            # We have to order scores to match labels order.
+            # If any label is missing in scores, we add it with score 0.
             if all_labels != prediction_targets_list:
-                confidences_map = {label: confidence for label, confidence in zip(prediction_targets, confidences)}
-                predictions_confidence[i] = tuple(confidences_map.get(label, 0.0) for label in all_labels)
+                scores_map = {label: score for label, score in zip(prediction_targets, scores)}
+                predictions_score[i] = tuple(scores_map.get(label, 0.0) for label in all_labels)
 
-            # Check that all confidences can be converted to float and that they sum to 1.
-            sum_confidences = sum(float(confidence) for confidence in predictions_confidence[i])
-            if not numpy.isclose(sum_confidences, 1.0):
-                raise exceptions.InvalidArgumentValueError(
-                    f"Confidences do not sum to 1.0 for sample '{predictions.loc[i, INDEX_COLUMN]}', but {sum_confidences}."
-                )
+            # Check that all scores can be converted to float.
+            for score in predictions_score[i]:
+                float(score)
 
-        predictions_confidence_encoded = self.one_hot_encode_confidence(predictions_confidence, all_labels)
+        predictions_score_encoded = self.one_hot_encode_score(predictions_score, all_labels)
 
-        return truth_target_encoded, predictions_confidence_encoded
+        return truth_target_encoded, predictions_score_encoded
 
 
 class RocAucMetric(_RocAucBase):
@@ -895,10 +885,10 @@ class RocAucMetric(_RocAucBase):
     """
 
     def score(self, truth: Truth, predictions: Predictions) -> float:
-        truth_target_encoded, predictions_confidence_encoded = self.encode_confidence(truth, predictions)
+        truth_target_encoded, predictions_score_encoded = self.encode_score(truth, predictions)
 
         # We use multi-label ROC AUC to compute for binary target as well.
-        scores = metrics.roc_auc_score(truth_target_encoded, predictions_confidence_encoded, average=None)
+        scores = metrics.roc_auc_score(truth_target_encoded, predictions_score_encoded, average=None)
 
         if len(scores) != 2:
             raise exceptions.InvalidArgumentValueError("Predictions are not binary.")
@@ -914,10 +904,10 @@ class RocAucMicroMetric(_RocAucBase):
     """
 
     def score(self, truth: Truth, predictions: Predictions) -> float:
-        truth_target_encoded, predictions_confidence_encoded = self.encode_confidence(truth, predictions)
+        truth_target_encoded, predictions_score_encoded = self.encode_score(truth, predictions)
 
         # We use multi-label ROC AUC to compute for multi-class target as well.
-        return metrics.roc_auc_score(truth_target_encoded, predictions_confidence_encoded, average='micro')
+        return metrics.roc_auc_score(truth_target_encoded, predictions_score_encoded, average='micro')
 
 
 class RocAucMacroMetric(_RocAucBase):
@@ -926,10 +916,10 @@ class RocAucMacroMetric(_RocAucBase):
     """
 
     def score(self, truth: Truth, predictions: Predictions) -> float:
-        truth_target_encoded, predictions_confidence_encoded = self.encode_confidence(truth, predictions)
+        truth_target_encoded, predictions_score_encoded = self.encode_score(truth, predictions)
 
         # We use multi-label ROC AUC to compute for multi-class target as well.
-        return metrics.roc_auc_score(truth_target_encoded, predictions_confidence_encoded, average='macro')
+        return metrics.roc_auc_score(truth_target_encoded, predictions_score_encoded, average='macro')
 
 
 class _RankMetricBase(Metric):
@@ -975,7 +965,8 @@ class _RankMetricBase(Metric):
 class MeanReciprocalRankMetric(_RankMetricBase):
     """
     This computes the mean of the reciprocal of elements of a vector of rankings. This metric is used for linkPrediction problems.
-    Consider the example:
+    Consider the example::
+
         learningData:
             d3mIndex    subject object      relationship (target)
             0           James   John        father
@@ -1006,9 +997,11 @@ class MeanReciprocalRankMetric(_RankMetricBase):
             2           grandfather     4
             2           aunt            5
 
-        Note that ranks (of truth relationships in the predictions) = [4,1,2]
-        MRR = np.sum(1/ranks)/len(ranks)
-        MRR = 0.58333
+    Note that ranks (of truth relationships in the predictions) = [4,1,2]
+
+    MRR = np.sum(1/ranks)/len(ranks)
+
+    MRR = 0.58333
     """
 
     def score(self, truth: Truth, predictions: Predictions) -> float:
@@ -1025,7 +1018,8 @@ class MeanReciprocalRankMetric(_RankMetricBase):
 class HitsAtKMetric(_RankMetricBase):
     """
     The computes how many elements of a vector of ranks make it to the top 'k' positions.
-    Consider the example:
+    Consider the example::
+
         learningData:
             d3mIndex    subject object      relationship (target)
             0           James   John        father
@@ -1056,10 +1050,13 @@ class HitsAtKMetric(_RankMetricBase):
             2           grandfather     4
             2           aunt            5
 
-        Note that ranks (of truth relationships in the predictions) = [4,1,2]
-        Hits@3 = 2/3 = 0.666666
-        Hits@1 = 1/3 = 0.3333333
-        Hits@5 = 3/3 = 1.0
+    Note that ranks (of truth relationships in the predictions) = [4,1,2]
+
+    Hits@3 = 2/3 = 0.666666
+
+    Hits@1 = 1/3 = 0.3333333
+
+    Hits@5 = 3/3 = 1.0
     """
 
     def __init__(self, k: int) -> None:

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/problem.json",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/problem.json",
   "title": "Problem description",
   "description": "Schema for problem description.",
   "type": "object",
@@ -19,6 +19,9 @@
     },
     "description": {
       "$ref": "https://metadata.datadrivendiscovery.org/schemas/v0/definitions.json#/definitions/description"
+    },
+    "keywords": {
+      "$ref": "https://metadata.datadrivendiscovery.org/schemas/v0/definitions.json#/definitions/keywords"
     },
     "digest": {
       "$ref": "https://metadata.datadrivendiscovery.org/schemas/v0/definitions.json#/definitions/digest"

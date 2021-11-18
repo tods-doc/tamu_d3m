@@ -8,12 +8,6 @@
     margin-right: 0;
 }
 
-/* Let sidebar sticky to the top of the viewport when scrolling down. */
-.sphinxsidebar {
-  position: sticky;
-  top: 0;
-}
-
 @media only screen and (min-width: 1250px) {
   /* Wider sidebar on large screens. */
   .sphinxsidebar {
@@ -35,4 +29,26 @@
     line-height: 32px;
     font-size: 0.9em;
   }
+}
+
+/* Fixing dt/dd alignment. */
+div.body dd, div.body dt {
+  line-height: 1.5em;
+}
+
+/* Provide extra space below the search form in the sidebar. */
+#searchbox form {
+  margin-bottom: 10px;
+}
+
+/* Used by sticky-sidebar. */
+.toc-sidebar {
+    will-change: min-height;
+}
+
+/* Used by sticky-sidebar. */
+.toc-sidebar__inner {
+    transform: translate(0, 0);
+    transform: translate3d(0, 0, 0);
+    will-change: position, transform;
 }

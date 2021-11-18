@@ -1,4 +1,248 @@
+## vNEXT
+
+### Enhancements
+
+* Allow loading code at CLI startup using `-M`/`--module` argument.
+  Useful to register custom problem types and metrics
+  and any other similar initialization.
+  [!435](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/435)
+* Added standard tabular data splitting pipelines from the [metalearning](https://gitlab.com/datadrivendiscovery/metalearning/-/merge_requests/75) repository.
+  [!418](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/418)
+* Added `python3 -m d3m openml crawl` CLI command which crawls OpenML tasks and downloads
+  them into D3M dataset and problem description formats.
+  [#510](https://gitlab.com/datadrivendiscovery/d3m/-/issues/510)
+  [!415](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/415)
+  [!449](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/449)
+  [!415](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/451)
+  [!452](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/452)
+  [!453](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/453)
+* Added `prepare_data_and_save` and `evaluate_with_prepared_data` top-level functions to the runtime module:
+  * `prepare_data_and_save` function is a variation of `prepare_data` function but saves prepared data.
+  * `evaluate_with_prepared_data` function is a variation of `evaluate` function but uses saved prepared data.
+  [#510](https://gitlab.com/datadrivendiscovery/d3m/-/issues/510)
+  [!396](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/413)
+  [!416](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/416)
+* Added `prepare-data` command to CLI which runs the data preparation pipeline on data and saves the results.
+  [#510](https://gitlab.com/datadrivendiscovery/d3m/-/issues/510)
+  [!396](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/413)
+  [!416](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/416)
+* Added `--data-pipeline-run` argument to runtime CLI commands to record
+  in the final pipeline run how was data prepared for the run.
+  Argument should point to a pickled data preparation pipeline run.
+  There are also `--fold-group-uuid` and `--fold-index` arguments to set the fold
+  information in the final pipeline run.
+  [#510](https://gitlab.com/datadrivendiscovery/d3m/-/issues/510)
+  [!396](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/413)
+  [!416](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/416)
+  [!417](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/417)
+* Extended pipeline description schema to allow passing constant values as
+  inputs to a primitive step and added support for it around the codebase.
+  This should be mostly used for tests and not misused.
+  [#513](https://gitlab.com/datadrivendiscovery/d3m/-/issues/513)
+  [!414](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/414)
+* Implemented `D3MProblemSaver` so `Problem` objects can now be saved using their
+  save method into D3M problem format.
+  [#510](https://gitlab.com/datadrivendiscovery/d3m/-/issues/510)
+  [!412](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/412)
+* Added `OpenMLProblemLoader` class, which enables automatic use of OpenML
+  tasks as problem descriptions by providing URI of shape `https://www.openml.org/t/{task_id}`.
+  [#505](https://gitlab.com/datadrivendiscovery/d3m/-/issues/505)
+  [!411](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/411)
+* `about.datasetURI` is now populated when saving D3M datasets.
+* Replaced jsonschema's optional GPL dependencies with equivalent MIT ones.
+  [!471](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/471)
+* Updated metadata fields to comply with current JSON Schema version
+  [!464](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/464)
+* Changed type equality comparison that failed for 2D list hyperparameter
+  [!474](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/474)
+
+### Bugfixes
+
+* Fixed computing score for datasets without d3mIndex colum.
+  [#533](https://gitlab.com/datadrivendiscovery/d3m/-/issues/533)
+  [!456](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/456)
+* Fixed a resource leak in the runtime.
+  [#517](https://gitlab.com/datadrivendiscovery/d3m/-/issues/517)
+  [!419](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/419)
+* Fixed a memory leak in the runtime.
+  [#519](https://gitlab.com/datadrivendiscovery/d3m/-/issues/519)
+  [!470](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/470)
+
+### Other
+
+* Automatic type checking when setting values has been removed from `Params`
+  to improve performance. You can now use the new `Params.validate` method
+  to check values after setting them if and when you want that.
+  [#443](https://gitlab.com/datadrivendiscovery/d3m/-/issues/443)
+  [!199]https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/199)
+* Added support for Python 3.7 and 3.8.
+  [#262](https://gitlab.com/datadrivendiscovery/d3m/-/issues/262)
+  [#298](https://gitlab.com/datadrivendiscovery/d3m/-/issues/298)
+  [!199]https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/199)
+* Removed `python3 -m d3m index discover` CLI command because PyPi
+  removed API endpoint the command was using. See
+  [this issue](https://github.com/pypa/pip/issues/5216) for more details.
+  [!446](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/446)
+* Fixed installation on Windows.
+  [#524](https://gitlab.com/datadrivendiscovery/d3m/-/issues/524)
+  [!422](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/422)
+* Made path manipulation compatible with Windows (`file:///C:/Users/...` URLs).
+  [#527](https://gitlab.com/datadrivendiscovery/d3m/-/issues/527)
+  [#529](https://gitlab.com/datadrivendiscovery/d3m/-/issues/529)
+  [#539](https://gitlab.com/datadrivendiscovery/d3m/-/issues/539)
+  [!429](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/429)
+  [!448](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/448)
+  [!465](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/465)
+* Test dependencies can now be installed using the `[tests]` extra.
+  [#263](https://gitlab.com/datadrivendiscovery/d3m/-/issues/263)
+  [!420](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/420)
+  [!421](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/421)
+* Removed short version (`-s`) of the `--scratch` CLI argument.
+  [!415](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/415)
+  **Backwards incompatible.**
+* Changed short version of the `--datasets` CLI argument from `-d` to `-D`.
+  [!415](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/415)
+  **Backwards incompatible.**
+* Bumped the lowest `pandas` dependency to 1.1.5.
+  [!415](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/415)
+  [!199]https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/199)
+* Bumped `openml` dependency to 0.11.0.
+  [!415](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/415)
+* Bumped the highest supported common dependencies to:
+    * `scikit-learn` to 0.24.2
+    * `numpy` to 1.21.2
+    * `pandas` to 1.3.4
+    * `scipy` to 1.7.1
+
+    [!469](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/469)
+* `PrimitiveStep.add_argument`'s argument `data_reference` has been renamed
+  to `data` (because now you can pass a value itself as well).
+  [!414](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/414)
+* D3M datasets are now saved with version set to `4.1.1`.
+* Development version (the `devel` branch) is now PEP-440 compliant.
+  [#531](https://gitlab.com/datadrivendiscovery/d3m/-/issues/531)
+  [!457](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/457)
+* Added to `algorithm_types`:
+    * `BAG_OF_TRICKS`
+
+    [!460](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/460)
+* Fix combine_columns() to be relatively more efficient for datasets with high-dimensionality.
+  [!458](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/458)
+
+## v2020.11.3
+
+### Enhancements
+
+* Pipeline has now a new implementation of `get_exposable_outputs` method
+  (previously deprecated) which returns all possible data references one can expose
+  from a pipeline (not just those which are produced during regular execution).
+  Similarly, pipeline steps now have `get_exposable_data_references` method.
+  [!396](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/396)
+* `Result` class of results from running a pipeline has now a
+  `get_standard_pipeline_output` helper method to return the output value of
+  a standard pipeline.
+  [!396](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/396)
+* `Runtime.fit` and `Runtime.produce` methods' `return_values` parameter
+  now accepts also data references of an output which would otherwise not be produced
+  and it forces that output to be produced. This allows top-level `fit`
+  and `produce` functions to have a new `expose_outputs` parameter where
+  you can list all outputs you want exposed, even if they would otherwise not
+  be produced.
+  [#294](https://gitlab.com/datadrivendiscovery/d3m/-/issues/294)
+  [!396](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/396)
+  [!408](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/408)
+* Added support for version 4.1.1 of D3M dataset schema:
+  * Added `https://metadata.datadrivendiscovery.org/types/LocationPolygon`,
+    `https://metadata.datadrivendiscovery.org/types/BagKey`, and
+    `https://metadata.datadrivendiscovery.org/types/Band` semantic types.
+    [!406](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/406)
+  * Added `MULTIPLE_INSTANCE_LEARNING` task keyword.
+    [!406](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/406)
+  * Added `spatial_reference_system` metadata field.
+    [!406](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/406)
+* Pipeline runs made using `evaluate` runtime command can now be all
+  rerun.
+  [#407](https://gitlab.com/datadrivendiscovery/d3m/-/issues/407)
+  [!389](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/389)
+* All runtime CLI commands now accept optional data preparation pipelines.
+  [#286](https://gitlab.com/datadrivendiscovery/d3m/-/issues/286)
+  [!385](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/385)
+* Deprecated `DATA_PREPROCESSING` and removed `DATA_WRANGLING` primitive
+  families. Consider using `DATA_TRANSFORMATION`, `DATA_CLEANING`, or `FEATURE_EXTRACTION` instead.
+  [#329](https://gitlab.com/datadrivendiscovery/d3m/-/issues/329)
+  [!399](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/399)
+  [!400](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/400)
+  **Backwards incompatible.**
+* Removed PyArrow dependency. Now you have to manually register
+  serializers/deserializers if you are using it.
+  [!393](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/393)
+* Allow hiding false positive warnings for random sources, populated with a list
+  of known false positives.
+  [#461](https://gitlab.com/datadrivendiscovery/d3m/-/issues/461)
+  [#465](https://gitlab.com/datadrivendiscovery/d3m/-/issues/465)
+  [!387](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/387)
+* Removed use of Pycurl.
+  [#463](https://gitlab.com/datadrivendiscovery/d3m/-/issues/463)
+  [!384](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/384)
+* Worker ID (used in pipeline runs to identify the machine on which the pipeline ran)
+  can now be provided using the environment variable `D3M_WORKER_ID`.
+  [#278](https://gitlab.com/datadrivendiscovery/d3m/-/issues/278)
+  [!379](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/379)
+* `RuntimeEnvironment` is now cached when not provided to the reference runtime.
+  [#280](https://gitlab.com/datadrivendiscovery/d3m/-/issues/280)
+  [!380](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/380)
+
+### Bugfixes
+
+* Fixed typing information for bound parameters in `Bounded` hyper-parameter class to correctly support `None` value.
+  [!405](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/405)
+* Resolved a performance issue of accuracy, f1 micro, f1 macro, hamming loss,
+  and all ROC AUC metrics.
+  [#484](https://gitlab.com/datadrivendiscovery/d3m/-/issues/484)
+  [!395](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/395)
+* Fixed saving of small datasets.
+  [#494](https://gitlab.com/datadrivendiscovery/d3m/-/issues/494)
+  [!397](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/397)
+* Fixed how hyper-parameters are prepared for primitives passed as a hyper-parameter.
+  [!391](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/391)
+
+### Other
+
+* `return_values` parameter of `Runtime.fit` and `Runtime.produce`
+  has been renamed to `outputs_to_expose`. Old name has been deprecated.
+  [#499](https://gitlab.com/datadrivendiscovery/d3m/-/issues/499)
+  [!407](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/407)
+* `confidence_for` metadata field has been renamed to `score_for`.
+  [#496](https://gitlab.com/datadrivendiscovery/d3m/-/issues/496)
+  [!404](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/404)
+  **Backwards incompatible.**
+* Removed semantic type `https://metadata.datadrivendiscovery.org/types/Confidence`.
+  Use `https://metadata.datadrivendiscovery.org/types/Score` instead
+  (optionally with addition of `https://metadata.datadrivendiscovery.org/types/Likelihood`
+  or `https://metadata.datadrivendiscovery.org/types/LogLikelihood`).
+  [#496](https://gitlab.com/datadrivendiscovery/d3m/-/issues/496)
+  [!404](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/404)
+  **Backwards incompatible.**
+* Added new semantic types:
+  * `https://metadata.datadrivendiscovery.org/types/Likelihood`
+  * `https://metadata.datadrivendiscovery.org/types/LogLikelihood`
+
+    [#496](https://gitlab.com/datadrivendiscovery/d3m/-/issues/496)
+    [!404](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/404)
+
+* Added `LogLikelihood` and `Likelihood` semantic types to definitions.
+  [#496](https://gitlab.com/datadrivendiscovery/d3m/-/issues/496)
+  [!404](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/404)
+* Bumped core package Pandas dependency upper bound to 1.1.3.
+  [#495](https://gitlab.com/datadrivendiscovery/d3m/-/issues/495)
+  [!402](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/402)
+
 ## v2020.5.18
+
+* Support for version 4.1.0 of D3M dataset schema has been added.
+* ROC-AUC and multi-label metrics are now support. Mean reciprocal rank and hits at k metrics
+  have been added. One can now also register custom additional metrics.
+* Reference runtime now does not keep primitive instances in memory anymore.
 
 ### Enhancements
 
@@ -19,6 +263,7 @@
   object is freed (e.g., releasing GPUs).
   [#313](https://gitlab.com/datadrivendiscovery/d3m/-/issues/313)
   [!376](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/376)
+  **Could be backwards incompatible.**
 * Added support for version 4.1.0 of D3M dataset schema:
   * Added `MONTHS` to column's `time_granularity` metadata.
     [!340](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/340)
@@ -33,7 +278,7 @@
   * Added `file_columns_count` metadata field and updated `file_columns` metadata field
     with additional sub-fields. Also renamed sub-field `name` to `column_name` and added
     `column_index` sub-fields to `file_columns` metadata.
-    [!372](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/372)    
+    [!372](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/372)
     **Backwards incompatible.**
 * Moved high-level primitive base classes for file readers and dataset splitting
   from common primitives to d3m core package.
@@ -76,7 +321,7 @@
   [!348](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/348)
   **Could be backwards incompatible.**
 * Added CLI to validate primitive descriptions for metalearning database
-  (`python3 -m d3m index validate`).
+  (`python3 -m d3m primitive validate`).
   [!333](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/333)
 * Raise an exception during dataset loading if `targets.csv` file does
   not combine well with the dataset entry point.
@@ -142,7 +387,7 @@
   was deprecated by NumPy.
   [#230](https://gitlab.com/datadrivendiscovery/d3m/-/issues/230)
   [!362](https://gitlab.com/datadrivendiscovery/d3m/-/merge_requests/362)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * CLI has now `--version` command which returns the version of the d3m
   core package itself.
   [#378](https://gitlab.com/datadrivendiscovery/d3m/-/issues/378)
@@ -243,7 +488,7 @@
 
     [#401](https://gitlab.com/datadrivendiscovery/d3m/issues/401)
     [!310](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/310)
-    **Backwards incompatible.**  
+    **Backwards incompatible.**
 
 * Added OpenML dataset loader. Now you can pass an URL to a OpenML dataset
   and it will be downloaded and converted to a `Dataset` compatible object,
@@ -270,11 +515,11 @@
   but has now `--input-run` argument instead.
   [#202](https://gitlab.com/datadrivendiscovery/d3m/issues/202)
   [!249](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/249)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * Changed `LossFunctionMixin` to support multiple loss functions.
   [#386](https://gitlab.com/datadrivendiscovery/d3m/issues/386)
   [!305](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/305)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * Pipeline equality and hashing functions now have `only_control_hyperparams`
   argument which can be set to use only control hyper-parameters when doing
   comparisons.
@@ -313,7 +558,7 @@
   in editable mode (`pip3 install -e ...`) when being installed from the
   git repository.
   [!280](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/280)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 
 ### Other
 
@@ -322,16 +567,16 @@
     * `fit`: `problem_description`
     * `score`: `scoring_pipeline`, `problem_description`, `metrics`, `predictions_random_seed`
     * `prepare_data`: `data_pipeline`, `problem_description`, `data_params`
-    * `evaluate`: `data_pipeline`, `scoring_pipeline`, `problem_description`, `data_params`, `metrics`  
-  
+    * `evaluate`: `data_pipeline`, `scoring_pipeline`, `problem_description`, `data_params`, `metrics`
+
     [#352](https://gitlab.com/datadrivendiscovery/d3m/issues/352)
     [!301](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/301)
-    **Backwards incompatible.**  
+    **Backwards incompatible.**
 
 * `can_accept` method has been removed from primitive interfaces.
   [#334](https://gitlab.com/datadrivendiscovery/d3m/issues/334)
   [!300](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/300)
-  **Backwards incompatible.**    
+  **Backwards incompatible.**
 * NetworkX objects are not anymore container types and are not allowed
   anymore to be passed as values between primitives. Dataset loader now
   does not convert a GML file to a NetworkX object but represents it
@@ -339,11 +584,11 @@
   resource into a normalized edge-list graph representation.
   [#349](https://gitlab.com/datadrivendiscovery/d3m/issues/349)
   [!299](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/299)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * `JACCARD_SIMILARITY_SCORE` metric is now a binary metric and requires
   `pos_label` parameter.
   [!299](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/299)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * Updated core dependencies. Some important packages are now at versions:
     * `tensorflow`: 2.0.0
     * `keras`: 2.3.1
@@ -375,7 +620,7 @@
   `sampling_rate` to make it consistent across metadata. This field
   should contain a sampling rate used for the described dimension,
   when values in the dimension are sampled.
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 
 ## v2019.6.7
 
@@ -498,7 +743,7 @@
 
 ### Bugfixes
 
-* Fixed `NormalizeMutualInformationMetric` implementation. 
+* Fixed `NormalizeMutualInformationMetric` implementation.
   [#357](https://gitlab.com/datadrivendiscovery/d3m/issues/357)
   [!257](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/257)
 * JSON representation of `Union` hyper-parameter values and other
@@ -506,7 +751,7 @@
   interoperability.
   [#359](https://gitlab.com/datadrivendiscovery/d3m/issues/359)
   [!256](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/256)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * All d3m schemas are now fully valid according to JSON schema draft v4.
   [#79](https://gitlab.com/datadrivendiscovery/d3m/issues/79)
   [!233](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/233)
@@ -517,7 +762,7 @@
   as their bounds. This assures compatibility with JSON.
   [#324](https://gitlab.com/datadrivendiscovery/d3m/issues/324)
   [!237](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/237)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * Pipelines are now exported to JSON in strict compliance of the
   JSON specification.
   [#323](https://gitlab.com/datadrivendiscovery/d3m/issues/323)
@@ -558,7 +803,7 @@
 * Pipeline run schema now requires scoring dataset inputs to be recorded
   if a data preparation pipeline has not been used.
   [!243](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/243)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * Core package now provides standard scoring primitive and scoring pipeline
   which are used by runtime by default.
   [#307](https://gitlab.com/datadrivendiscovery/d3m/issues/307)
@@ -580,7 +825,7 @@
   To obtain internal representation use `to_internal_json_structure`
   and `to_internal_simple_structure`.
   [!225](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/225)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * `NeuralNetworkModuleMixin` and `NeuralNetworkObjectMixin` have been
   added to primitive interfaces to support representing neural networks
   as pipelines.
@@ -589,9 +834,9 @@
 * `get_loss_function` has been renamed to `get_loss_metric` in
   `LossFunctionMixin`.
   [!87](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/87)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 * `UniformInt`, `Uniform`, and `LogUniform` hyper-parameter classes now
-  subclass `Bounded` class. 
+  subclass `Bounded` class.
   [!216](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/216)
 * Metrics do not have default parameter values anymore, cleaned legacy
   parts of code assuming so.
@@ -646,7 +891,7 @@
 
 * Primitive family `METAFEATURE_EXTRACTION` has been renamed to `METALEARNING`.
   [!160](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/160)
-  **Backwards incompatible.**  
+  **Backwards incompatible.**
 
 ## v2019.4.4
 
@@ -687,7 +932,7 @@
   by any ``Dataset`` object your primitive might create and followup primitives in
   the pipeline should have access to. To support configuration of the location of these
   temporary directories, the reference runtime now has a `--scratch` command line argument
-  and corresponding `scratch_dir` constructor argument. 
+  and corresponding `scratch_dir` constructor argument.
   [#306](https://gitlab.com/datadrivendiscovery/d3m/issues/306)
   [!190](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/190)
 * Made sure that number of inputs provided to the runtime has to match the number of inputs a pipeline accepts.
@@ -721,7 +966,7 @@
   generate and update metadata given a data value.
   Metadata methods `set_for_value` and `clear` have been deprecated and can
   be generally replaced with `generate` call, or creating a new metadata
-  object, or removing the call. 
+  object, or removing the call.
   **Backwards incompatible.**
   [#143](https://gitlab.com/datadrivendiscovery/d3m/issues/143)
   [!180](https://gitlab.com/datadrivendiscovery/d3m/merge_requests/180)
@@ -788,7 +1033,7 @@
   * `HAMMING_LOSS`
 * Removed from `performance_metric`:
     * `ROOT_MEAN_SQUARED_ERROR_AVG`
-    
+
     **Backwards incompatible.**
 * Added `https://metadata.datadrivendiscovery.org/types/GPUResourcesUseParameter` and
   `https://metadata.datadrivendiscovery.org/types/CPUResourcesUseParameter` semantic types for

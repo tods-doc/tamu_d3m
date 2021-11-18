@@ -163,7 +163,9 @@ class TestContainerMetadata(unittest.TestCase):
         }])
 
     def test_dataframe(self):
-        df = container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']}, generate_metadata=True)
+        df = container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})
+        df.A = df.A.astype(numpy.int64, copy=False)
+        df.metadata = df.metadata.generate(df)
 
         self.assertEqual(utils.to_json_structure(df.metadata.to_internal_simple_structure()), [{
             'selector': [],
@@ -201,7 +203,9 @@ class TestContainerMetadata(unittest.TestCase):
         }])
 
     def test_dataset(self):
-        dataset = container.Dataset({'0': container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})}, generate_metadata=False)
+        dataframe = container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})
+        dataframe.A = dataframe.A.astype(numpy.int64, copy=False)
+        dataset = container.Dataset({'0': dataframe}, generate_metadata=False)
 
         compact_metadata = dataset.metadata.generate(dataset, compact=True)
         noncompact_metadata = dataset.metadata.generate(dataset, compact=False)
@@ -343,7 +347,9 @@ class TestContainerMetadata(unittest.TestCase):
             },
         }])
 
-        lst = container.List([container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})], generate_metadata=True)
+        dataframe = container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})
+        dataframe.A = dataframe.A.astype(numpy.int64)
+        lst = container.List([dataframe], generate_metadata=True)
 
         self.assertEqual(utils.to_json_structure(lst.metadata.to_internal_simple_structure()), [{
             'selector': [],
@@ -389,7 +395,7 @@ class TestContainerMetadata(unittest.TestCase):
         }])
 
     def test_ndarray(self):
-        array = container.ndarray(numpy.array([1, 2, 3]), generate_metadata=True)
+        array = container.ndarray(numpy.array([1, 2, 3], dtype=numpy.int64), generate_metadata=True)
 
         self.assertEqual(utils.to_json_structure(array.metadata.to_internal_simple_structure()), [{
             'selector': [],
@@ -408,7 +414,9 @@ class TestContainerMetadata(unittest.TestCase):
         }])
 
     def test_dataframe_with_names_kept(self):
-        df = container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']}, generate_metadata=True)
+        df = container.DataFrame({'A': [1, 2, 3], 'B': ['a', 'b', 'c']})
+        df.A = df.A.astype(numpy.int64)
+        df.metadata = df.metadata.generate(df)
 
         df.metadata = df.metadata.update((base.ALL_ELEMENTS, 0), {
             'name': 'first_column',
@@ -499,7 +507,9 @@ class TestContainerMetadata(unittest.TestCase):
                 'name': 'columns',
                 'semantic_types': ['https://metadata.datadrivendiscovery.org/types/TabularColumn'],
             },
-        }, generate_metadata=True)
+        })
+        df.A = df.A.astype(numpy.int64)
+        df.metadata = df.metadata.generate(df)
 
         self.assertEqual(utils.to_json_structure(df.metadata.to_internal_simple_structure()), [{
             'selector': [],
@@ -538,11 +548,13 @@ class TestContainerMetadata(unittest.TestCase):
         }])
 
     def test_complex_value(self):
+        self.maxDiff = None
+
         dataset = container.Dataset({
             '0': container.DataFrame({
                 'A': [
                     container.ndarray(numpy.array(['a', 'b', 'c'])),
-                    container.ndarray(numpy.array([1, 2, 3])),
+                    container.ndarray(numpy.array([1, 2, 3], dtype=numpy.int64)),
                     container.ndarray(numpy.array([1.0, 2.0, 3.0])),
                 ],
                 'B': [

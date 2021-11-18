@@ -1,10 +1,10 @@
 import argparse
-import contextlib
 import json
 import hashlib
 import importlib
 import importlib.abc
 import importlib.machinery
+import importlib.util
 import inspect
 import logging
 import os.path
@@ -15,15 +15,14 @@ import sys
 import time
 import traceback
 import typing
-from xmlrpc import client as xmlrpc  # type: ignore
 
-import frozendict  # type: ignore
-#import pycurl  # type: ignore
+import frozendict
+import requests
 
-from d3m import exceptions, namespace, utils
+from d3m import exceptions, namespace
 from d3m.primitive_interfaces import base
 
-__all__ = ('search', 'get_primitive', 'get_primitive_by_id', 'get_loaded_primitives', 'load_all', 'register_primitive', 'discover')
+__all__ = ('search', 'get_primitive', 'get_primitive_by_id', 'get_loaded_primitives', 'load_all', 'register_primitive')
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +106,8 @@ def get_primitive(primitive_path: str) -> typing.Type[base.PrimitiveBase]:
     if not primitive_path:
         raise exceptions.InvalidArgumentValueError("Primitive path is required.")
 
-    #if not primitive_path.startswith('d3m.primitives.'):
-    #    raise exceptions.InvalidArgumentValueError("Primitive path does not start with \"d3m.primitives\".")
+    if not primitive_path.startswith('d3m.primitives.'):
+        raise exceptions.InvalidArgumentValueError("Primitive path does not start with \"d3m.primitives\".")
 
     path, name = primitive_path.rsplit('.', 1)
 
@@ -218,7 +217,7 @@ def register_primitive(primitive_path: str, primitive: typing.Type[base.Primitiv
     modules = modules_path.split('.')[2:]
 
     if 'd3m.primitives' not in sys.modules:
-        import d3m.primitives  # type: ignore
+        import d3m.primitives
 
     # Create any modules which do not yet exist.
     current_path = 'd3m.primitives'
@@ -235,11 +234,11 @@ def register_primitive(primitive_path: str, primitive: typing.Type[base.Primitiv
                 # Because we just could not load the module, we know that if the attribute exists,
                 # it has to be something else, which we do not want to clobber.
                 if hasattr(sys.modules[current_path], module_name):
-                    raise ValueError("'{module_path}' is already defined.".format(module_path))
+                    raise ValueError("'{module_path}' is already defined.".format(module_path=module_path))
 
                 module_spec = importlib.machinery.ModuleSpec(module_path, namespace.Loader(), is_package=True)
                 module = importlib.util.module_from_spec(module_spec)
-                module_spec.loader.exec_module(module)
+                module_spec.loader.exec_module(module)  # type: ignore
 
                 sys.modules[module_path] = module
                 setattr(sys.modules[current_path], module_name, module)
@@ -260,175 +259,154 @@ def register_primitive(primitive_path: str, primitive: typing.Type[base.Primitiv
     _loaded_primitives.add(primitive)
 
 
-def discover(index: str = 'https://pypi.org/pypi') -> typing.Tuple[str, ...]:
-    """
-    Returns package names from PyPi which provide D3M primitives.
+def download_files(primitive_metadata: frozendict.FrozenOrderedDict, output: str, redownload: bool) -> None:
+    for installation_entry in primitive_metadata.get('installation', []):
+        if installation_entry['type'] not in ['FILE', 'TGZ']:
+            continue
 
-    This is determined by them having a ``d3m_primitive`` among package keywords.
+        # We store into files based on digest. In this way we deduplicate same
+        # files used by multiple primitives.
+        output_path = os.path.join(output, installation_entry['file_digest'])
 
-    Parameters
-    ----------
-    index:
-        Base URL of Python Package Index to use.
+        if installation_entry['type'] == 'FILE':
+            if os.path.isfile(output_path) and not redownload:
+                print("File for volume {type}/{key} for primitive {python_path} ({primitive_id}) already exists, skipping: {file_uri}".format(
+                    python_path=primitive_metadata['python_path'],
+                    primitive_id=primitive_metadata['id'],
+                    type=installation_entry['type'],
+                    key=installation_entry['key'],
+                    file_uri=installation_entry['file_uri'],
+                ), flush=True)
+                continue
+        elif installation_entry['type'] == 'TGZ':
+            if os.path.isdir(output_path) and not redownload:
+                print("Directory for volume {type}/{key} for primitive {python_path} ({primitive_id}) already exists, skipping: {file_uri}".format(
+                    python_path=primitive_metadata['python_path'],
+                    primitive_id=primitive_metadata['id'],
+                    type=installation_entry['type'],
+                    key=installation_entry['key'],
+                    file_uri=installation_entry['file_uri'],
+                ), flush=True)
+                continue
 
-    Returns
-    -------
-    A list of package names.
-    """
+        # Cleanup.
+        if os.path.isdir(output_path):
+            shutil.rmtree(output_path)
+        elif os.path.exists(output_path):
+            os.remove(output_path)
 
-    client = xmlrpc.ServerProxy(index)
-    hits = client.search({'keywords': 'd3m_primitive'})
-    return tuple(sorted({package['name'] for package in hits}))
+        print("Downloading file for volume {type}/{key} for primitive {python_path} ({primitive_id}): {file_uri}".format(
+            python_path=primitive_metadata['python_path'],
+            primitive_id=primitive_metadata['id'],
+            type=installation_entry['type'],
+            key=installation_entry['key'],
+            file_uri=installation_entry['file_uri'],
+        ), flush=True)
 
+        output_file_obj: typing.Optional[typing.BinaryIO] = None
+        output_tar_process = None
 
-#def download_files(primitive_metadata: frozendict.FrozenOrderedDict, output: str, redownload: bool) -> None:
-#    last_progress_call = None
-#
-#    def curl_progress(download_total: int, downloaded: int, upload_total: int, uploaded: int) -> None:
-#        nonlocal last_progress_call
-#
-#        # Output at most once every 10 seconds.
-#        now = time.time()
-#        if last_progress_call is None or now - last_progress_call > 10:
-#            last_progress_call = now
-#
-#            print("Downloaded {downloaded}/{download_total} B".format(
-#                downloaded=downloaded,
-#                download_total=download_total,
-#            ), flush=True)
-#
-#    for installation_entry in primitive_metadata.get('installation', []):
-#        if installation_entry['type'] not in ['FILE', 'TGZ']:
-#            continue
-#
-#        # We store into files based on digest. In this way we deduplicate same
-#        # files used by multiple primitives.
-#        output_path = os.path.join(output, installation_entry['file_digest'])
-#
-#        if installation_entry['type'] == 'FILE':
-#            if os.path.isfile(output_path) and not redownload:
-#                print("File for volume {type}/{key} for primitive {python_path} ({primitive_id}) already exists, skipping: {file_uri}".format(
-#                    python_path=primitive_metadata['python_path'],
-#                    primitive_id=primitive_metadata['id'],
-#                    type=installation_entry['type'],
-#                    key=installation_entry['key'],
-#                    file_uri=installation_entry['file_uri'],
-#                ), flush=True)
-#                continue
-#        elif installation_entry['type'] == 'TGZ':
-#            if os.path.isdir(output_path) and not redownload:
-#                print("Directory for volume {type}/{key} for primitive {python_path} ({primitive_id}) already exists, skipping: {file_uri}".format(
-#                    python_path=primitive_metadata['python_path'],
-#                    primitive_id=primitive_metadata['id'],
-#                    type=installation_entry['type'],
-#                    key=installation_entry['key'],
-#                    file_uri=installation_entry['file_uri'],
-#                ), flush=True)
-#                continue
-#
-#        # Cleanup.
-#        if os.path.isdir(output_path):
-#            shutil.rmtree(output_path)
-#        elif os.path.exists(output_path):
-#            os.remove(output_path)
-#
-#        print("Downloading file for volume {type}/{key} for primitive {python_path} ({primitive_id}): {file_uri}".format(
-#            python_path=primitive_metadata['python_path'],
-#            primitive_id=primitive_metadata['id'],
-#            type=installation_entry['type'],
-#            key=installation_entry['key'],
-#            file_uri=installation_entry['file_uri'],
-#        ), flush=True)
-#
-#        output_file_obj: typing.BinaryIO = None
-#        output_tar_process = None
-#
-#        try:
-#            if installation_entry['type'] == 'FILE':
-#                output_file_obj = open(output_path, 'wb')
-#            elif installation_entry['type'] == 'TGZ':
-#                os.makedirs(output_path, mode=0o755, exist_ok=True)
-#                output_tar_process = subprocess.Popen(['tar', '-xz', '-C', output_path], stdin=subprocess.PIPE)
-#                output_file_obj = typing.cast(typing.BinaryIO, output_tar_process.stdin)
-#
-#            hash = hashlib.sha256()
-#            downloaded = 0
-#            start = time.time()
-#
-#            def write(data: bytes) -> None:
-#                nonlocal hash
-#                nonlocal downloaded
-#
-#                hash.update(data)
-#                downloaded += len(data)
-#
-#                output_file_obj.write(data)
-#
-#            while True:
-#                try:
-#                    with contextlib.closing(pycurl.Curl()) as curl:
-#                        curl.setopt(curl.URL, installation_entry['file_uri'])
-#                        curl.setopt(curl.WRITEFUNCTION, write)
-#                        curl.setopt(curl.NOPROGRESS, False)
-#                        curl.setopt(curl.FOLLOWLOCATION, True)
-#                        curl.setopt(getattr(curl, 'XFERINFOFUNCTION', curl.PROGRESSFUNCTION), curl_progress)
-#                        curl.setopt(curl.LOW_SPEED_LIMIT, 30 * 1024)
-#                        curl.setopt(curl.LOW_SPEED_TIME, 30)
-#                        curl.setopt(curl.RESUME_FROM, downloaded)
-#
-#                        curl.perform()
-#                        break
-#
-#                except pycurl.error as error:
-#                    if error.args[0] == pycurl.E_OPERATION_TIMEDOUT:
-#                        # If timeout, retry/resume.
-#                        print("Timeout. Retrying.", flush=True)
-#                    else:
-#                        raise
-#
-#            end = time.time()
-#
-#            print("Downloaded {downloaded} B in {seconds} second(s).".format(
-#                downloaded=downloaded,
-#                seconds=end - start,
-#            ), flush=True)
-#
-#            if output_tar_process is not None:
-#                # Close the input to the process to signal that we are done.
-#                output_file_obj.close()
-#                output_file_obj = None
-#
-#                # Wait for 60 seconds to finish writing everything out.
-#                if output_tar_process.wait(60) != 0:
-#                    raise subprocess.CalledProcessError(output_tar_process.returncode, output_tar_process.args)
-#                output_tar_process = None
-#
-#            if installation_entry['file_digest'] != hash.hexdigest():
-#                raise ValueError("Digest for downloaded file does not match one from metadata. Metadata digest: {metadata_digest}. Computed digest: {computed_digest}.".format(
-#                    metadata_digest=installation_entry['file_digest'],
-#                    computed_digest=hash.hexdigest(),
-#                ))
-#
-#        except Exception:
-#            # Cleanup.
-#            if output_tar_process is not None:
-#                try:
-#                    output_tar_process.kill()
-#                    output_tar_process.wait()
-#                    output_file_obj = None
-#                except Exception:
-#                    # We ignore errors cleaning up.
-#                    pass
-#            if os.path.isdir(output_path):
-#                shutil.rmtree(output_path)
-#            elif os.path.exists(output_path):
-#                os.remove(output_path)
-#
-#            raise
-#
-#        finally:
-#            if output_file_obj is not None:
-#                output_file_obj.close()
+        try:
+            if installation_entry['type'] == 'FILE':
+                output_file_obj = open(output_path, 'wb')
+            elif installation_entry['type'] == 'TGZ':
+                os.makedirs(output_path, mode=0o755, exist_ok=True)
+                output_tar_process = subprocess.Popen(['tar', '-xz', '-C', output_path], stdin=subprocess.PIPE)
+                output_file_obj = typing.cast(typing.BinaryIO, output_tar_process.stdin)
+
+            hash = hashlib.sha256()
+            downloaded = 0
+            start = time.time()
+            last_progress_report = None
+
+            while True:
+                try:
+                    headers = {}
+                    if downloaded:
+                        headers['Range'] = 'bytes={downloaded}-'.format(downloaded=downloaded)
+                    with requests.get(
+                        installation_entry['file_uri'],
+                        stream=True,
+                        headers=headers,
+                        allow_redirects=True,
+                        timeout=30,
+                    ) as response:
+                        response.raise_for_status()
+
+                        # We require the server to support partial requests. In the case that it returns code 200 when we
+                        # have send "Range" header (when downloaded is not zero) we raise an exception.
+                        if (downloaded and response.status_code != 206) or (not downloaded and response.status_code != 200):
+                            raise requests.HTTPError("Unexpected status: {status_code}".format(status_code=response.status_code), response=response)
+
+                        download_total = response.headers.get('Content-Length')
+
+                        for data in response.iter_content(chunk_size=1024 * hash.block_size):
+                            hash.update(data)
+                            downloaded += len(data)
+                            output_file_obj.write(data)  # type: ignore
+
+                            # Output at most once every 10 seconds.
+                            now = time.time()
+                            if last_progress_report is None or now > last_progress_report + 10:
+                                last_progress_report = now
+                                if download_total:
+                                    print(
+                                        "Downloaded {downloaded}/{download_total} B".format(downloaded=downloaded, download_total=download_total),
+                                        flush=True,
+                                    )
+                                else:
+                                    print(
+                                        "Downloaded {downloaded} B".format(downloaded=downloaded),
+                                        flush=True,
+                                    )
+                    break
+                except requests.Timeout:
+                    # If timeout, retry/resume.
+                    print("Timeout. Retrying.", flush=True)
+
+            end = time.time()
+
+            print("Downloaded {downloaded} B in {seconds} second(s).".format(
+                downloaded=downloaded,
+                seconds=end - start,
+            ), flush=True)
+
+            if output_tar_process is not None:
+                # Close the input to the process to signal that we are done.
+                output_file_obj.close()  # type: ignore
+                output_file_obj = None
+
+                # Wait for 60 seconds to finish writing everything out.
+                if output_tar_process.wait(60) != 0:
+                    raise subprocess.CalledProcessError(output_tar_process.returncode, output_tar_process.args)
+                output_tar_process = None
+
+            if installation_entry['file_digest'] != hash.hexdigest():
+                raise ValueError("Digest for downloaded file does not match one from metadata. Metadata digest: {metadata_digest}. Computed digest: {computed_digest}.".format(
+                    metadata_digest=installation_entry['file_digest'],
+                    computed_digest=hash.hexdigest(),
+                ))
+
+        except Exception:
+            # Cleanup.
+            if output_tar_process is not None:
+                try:
+                    output_tar_process.kill()
+                    output_tar_process.wait()
+                    output_file_obj = None
+                except Exception:
+                    # We ignore errors cleaning up.
+                    pass
+            if os.path.isdir(output_path):
+                shutil.rmtree(output_path)
+            elif os.path.exists(output_path):
+                os.remove(output_path)
+
+            raise
+
+        finally:
+            if output_file_obj is not None:
+                output_file_obj.close()
 
 
 # TODO: Add more ways to search for primitives (by name, keywords, etc.).
@@ -436,11 +414,6 @@ def discover(index: str = 'https://pypi.org/pypi') -> typing.Tuple[str, ...]:
 def search_handler(arguments: argparse.Namespace) -> None:
     for primitive_path in search(primitive_path_prefix=getattr(arguments, 'prefix', None)):
         print(primitive_path)
-
-
-def discover_handler(arguments: argparse.Namespace) -> None:
-    for package_name in discover(index=getattr(arguments, 'index', DEFAULT_INDEX)):
-        print(package_name)
 
 
 def describe_handler(arguments: argparse.Namespace) -> None:
@@ -454,7 +427,7 @@ def describe_handler(arguments: argparse.Namespace) -> None:
 
         try:
             try:
-                primitive = get_primitive(primitive_path)
+                primitive: typing.Optional[typing.Type[base.PrimitiveBase]] = get_primitive(primitive_path)
             except Exception:
                 primitive = None
 
@@ -486,7 +459,7 @@ def describe_handler(arguments: argparse.Namespace) -> None:
                     indent=(getattr(arguments, 'indent', 2) or None),
                     sort_keys=getattr(arguments, 'sort_keys', False),
                     allow_nan=False,
-                )  # type: ignore
+                )
                 output_stream.write('\n')
         except Exception as error:
             if getattr(arguments, 'continue', False):
@@ -524,7 +497,7 @@ def main(argv: typing.Sequence) -> None:
 
         logging.basicConfig()
 
-        logger.warning("This CLI is deprecated. Use \"python3 -m d3m index\" instead.")
+        logger.warning("This CLI is deprecated. Use \"python3 -m d3m primitive\" instead.")
 
         parser = argparse.ArgumentParser(description="Explore D3M primitives.")
         cli.primitive_configure_parser(parser)

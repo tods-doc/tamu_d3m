@@ -22,13 +22,13 @@
   * `git push` & `git push --tags`
 * On `devel` branch:
   * `git merge master` to make sure `devel` is always on top of `master`.
-  * Change a version in `d3m/__init__.py` to `devel`.
+  * Change a version in `d3m/__init__.py` to tomorrow and append `.dev0`, e.g. `2019.2.13.dev0`.
   * Add a new empty `vNEXT` version on top of `HISTORY.md`.
   * Commit with message `Version bump for development.`
   * `git push`
 * After a release:
-  * Create a new [`core` and `primitives` Docker images](https://gitlab.com/datadrivendiscovery/images) for the release.
-  * Add new release to the [primitives index repository](https://gitlab.com/datadrivendiscovery/primitives/blob/master/HOW_TO_MANAGE.md).
+  * Update [`libs` and `libs-lite` Docker images](https://gitlab.com/datadrivendiscovery/images) with the new release.
+  * Update [primitives index repository](https://gitlab.com/datadrivendiscovery/primitives/blob/master/HOW_TO_MANAGE.md) with the new release.
 
 If there is a need for a patch version to fix a released version on the same day,
 use `.postX` prefix, like `2017.9.20.post0`. If more than a day has passed, just

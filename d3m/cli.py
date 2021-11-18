@@ -1,9 +1,15 @@
 import argparse
+import importlib
+import uuid
+
+import faulthandler
 import logging
+import sys
 import typing
 
 from d3m import exceptions, index, runtime, utils, __version__
 from d3m.container import dataset as dataset_module
+from d3m.contrib.openml import crawler as openml_crawler
 from d3m.metadata import base as metadata_base, pipeline as pipeline_module, pipeline_run, problem as problem_module
 
 logger = logging.getLogger(__name__)
@@ -20,7 +26,7 @@ def pipeline_run_handler(
 
 def pipeline_run_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
     subparsers = parser.add_subparsers(dest='pipeline_run_command', title='commands')
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     validate_parser = subparsers.add_parser(
         'validate', help="validate pipeline runs",
@@ -58,7 +64,7 @@ def dataset_handler(
 
 def dataset_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
     subparsers = parser.add_subparsers(dest='dataset_command', title='commands')
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     describe_parser = subparsers.add_parser(
         'describe', help="generate JSON description of datasets",
@@ -173,11 +179,15 @@ def problem_handler(
 
 def problem_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
     subparsers = parser.add_subparsers(dest='problem_command', title='commands')
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     describe_parser = subparsers.add_parser(
         'describe', help="generate JSON description of problems",
         description="Generates JSON descriptions of problems.",
+    )
+    convert_parser = subparsers.add_parser(
+        'convert', help="convert problems",
+        description="Converts one problem to another.",
     )
     validate_parser = subparsers.add_parser(
         'validate', help="validate problems",
@@ -226,6 +236,18 @@ def problem_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
         )
     describe_parser.set_defaults(problem_handler=problem_module.describe_handler)
 
+    if 'input_uri' not in skip_arguments:
+        convert_parser.add_argument(
+            '-i', '--input', dest='input_uri',
+            help="input path or URI of a problem",
+        )
+    if 'output_uri' not in skip_arguments:
+        convert_parser.add_argument(
+            '-o', '--output', dest='output_uri',
+            help="output path or URI of a problem",
+        )
+    convert_parser.set_defaults(problem_handler=problem_module.convert_handler)
+
     if 'list' not in skip_arguments:
         validate_parser.add_argument(
             '-l', '--list', default=False, action='store_true',
@@ -251,15 +273,11 @@ def primitive_handler(arguments: argparse.Namespace, parser: argparse.ArgumentPa
 
 def primitive_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
     subparsers = parser.add_subparsers(dest='primitive_command', title='commands')
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     search_parser = subparsers.add_parser(
         'search', help="search locally available primitives",
         description="Searches locally available primitives. Lists registered Python paths for primitives installed on the system.",
-    )
-    discover_parser = subparsers.add_parser(
-        'discover', help="discover primitives available on PyPi",
-        description="Discovers primitives available on PyPi. Lists package names containing D3M primitives on PyPi.",
     )
     describe_parser = subparsers.add_parser(
         'describe', help="generate JSON description of primitives",
@@ -280,13 +298,6 @@ def primitive_configure_parser(parser: argparse.ArgumentParser, *, skip_argument
             help="primitive path prefix to limit search results to",
         )
     search_parser.set_defaults(primitive_handler=index.search_handler)
-
-    if 'index' not in skip_arguments:
-        discover_parser.add_argument(
-            '-i', '--index', default=index.DEFAULT_INDEX, action='store',
-            help=f"base URL of Python Package Index to use, default {index.DEFAULT_INDEX}",
-        )
-    discover_parser.set_defaults(primitive_handler=index.discover_handler)
 
     if 'list' not in skip_arguments:
         describe_parser.add_argument(
@@ -377,7 +388,7 @@ def pipeline_handler(
 
 def pipeline_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
     subparsers = parser.add_subparsers(dest='pipeline_command', title='commands')
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     describe_parser = subparsers.add_parser(
         'describe', help="generate JSON description of pipelines",
@@ -468,6 +479,60 @@ def pipeline_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments
     validate_parser.set_defaults(pipeline_handler=pipeline_run.pipeline_handler)
 
 
+def openml_handler(
+    arguments: argparse.Namespace, parser: argparse.ArgumentParser, *,
+    pipeline_resolver: typing.Callable = None,
+    dataset_resolver: typing.Callable = None, problem_resolver: typing.Callable = None,
+) -> None:
+    # Call a handler for the command.
+    arguments.openml_handler(
+        arguments,
+        pipeline_resolver=pipeline_resolver,
+        dataset_resolver=dataset_resolver,
+        problem_resolver=problem_resolver,
+    )
+
+
+def openml_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
+    subparsers = parser.add_subparsers(dest='openml_command', title='commands')
+    subparsers.required = True
+
+    crawl_parser = subparsers.add_parser(
+        'crawl', help="crawl OpenML tasks",
+        description="Crawl OpenML tasks and corresponding datasets and convert them to D3M datasets and problems.",
+    )
+
+    if 'save_dir' not in skip_arguments:
+        crawl_parser.add_argument(
+            '-s', '--save', action='store', dest='save_dir', required=True,
+            help="directory where to save datasets and problems",
+        )
+    if 'task_types' not in skip_arguments:
+        crawl_parser.add_argument(
+            '-t', '--task-type', choices=utils.EnumArgProxy(problem_module.OpenMLTaskType),
+            action='append', dest='task_types', required=True,
+            help="task type to crawl, can be specified multiple times",
+        )
+    if 'max_tasks' not in skip_arguments:
+        crawl_parser.add_argument(
+            '--max-tasks', type=int, action='store', default=5,
+            help="maximum number of tasks to crawl, no limit if 0, default 5",
+        )
+    if 'ignore_tasks' not in skip_arguments:
+        crawl_parser.add_argument(
+            '--ignore_tasks', type=int, action='append', dest='ignore_tasks',
+            help="tasks to ignore/skip",
+        )
+    if 'ignore_datasets' not in skip_arguments:
+        crawl_parser.add_argument(
+            '--ignore_datasets', type=int, action='append', dest='ignore_datasets',
+            help="datasets to ignore/skip",
+        )
+    _common_runtime_configure_parser(crawl_parser, skip_arguments=skip_arguments)
+    _data_preprocessing_configure_parser(crawl_parser, skip_arguments=skip_arguments)
+    crawl_parser.set_defaults(openml_handler=openml_crawler.crawl_openml_handler)
+
+
 def runtime_handler(
     arguments: argparse.Namespace, parser: argparse.ArgumentParser, *,
     pipeline_resolver: typing.Callable = None, pipeline_run_parser: typing.Callable = None,
@@ -478,57 +543,125 @@ def runtime_handler(
 
     # TODO: These arguments are required, but this is not visible from the usage line. These arguments are marked as optional there.
     if getattr(arguments, 'input_run', None) is None:
-        manual_config = {
+        required_without_pipeline_run = {
             'fit': [
                 ('-i/--input', 'inputs'), ('-p/--pipeline', 'pipeline'),
             ],
             'produce': [
                 ('-t/--test-input', 'test_inputs'),
             ],
-            'score': [
-                ('-t/--test-input', 'test_inputs'), ('-a/--score-input', 'score_inputs'),
-            ],
             'fit-produce': [
-                ('-i/--input', 'inputs'), ('-t/--test-input', 'test_inputs'), ('-p/--pipeline', 'pipeline'),
+                ('-p/--pipeline', 'pipeline'),
             ],
             'fit-score': [
-                ('-i/--input', 'inputs'), ('-t/--test-input', 'test_inputs'), ('-a/--score-input', 'score_inputs'),
                 ('-p/--pipeline', 'pipeline'),
             ],
             'evaluate': [
                 ('-i/--input', 'inputs'), ('-p/--pipeline', 'pipeline'), ('-d/--data-pipeline', 'data_pipeline'),
             ],
+            'prepare-data': [
+                ('-i/--input', 'inputs'), ('-d/--data-pipeline', 'data_pipeline'), ('-s/--save-path', 'save_dir')
+            ],
         }.get(arguments.runtime_command, [])
-
-        if any(getattr(arguments, dest, None) is None for (name, dest) in manual_config):
+        if any(getattr(arguments, dest, None) is None for (name, dest) in required_without_pipeline_run):
             subparser.error(
-                '{command} requires either -u/--input-run or the following arguments: {manual_arguments}'.format(
+                '{command} requires the following arguments if run without -u/--input-run: {required_arguments}'.format(
                     command=arguments.runtime_command,
-                    manual_arguments=', '.join(
-                        name for (name, dest) in manual_config
+                    required_arguments=', '.join(
+                        name for (name, dest) in required_without_pipeline_run if getattr(arguments, dest, None) is None
                     ),
                 )
             )
+
+        allowed_only_with_data_pipeline = {command: [
+            ('-y/--data-param', 'data_params', None), ('--data-split-file', 'data_split_file', None), ('-I/--full-input', 'full_inputs', None), ('--data-random-seed', 'data_random_seed', 0)
+        ] for command in ['fit', 'produce', 'score', 'fit-produce', 'fit-score', 'evaluate', 'prepare-data']}.get(arguments.runtime_command, [])
+        if getattr(arguments, 'data_pipeline', None) is None and any(getattr(arguments, dest, None) not in [default, None] for (name, dest, default) in allowed_only_with_data_pipeline):
+            subparser.error(
+                'The following arguments can be used only with -d/--data-pipeline: {arguments}'.format(
+                    arguments=', '.join(
+                        name for (name, dest, default) in allowed_only_with_data_pipeline if getattr(arguments, dest, None) not in [default, None]
+                    ),
+                )
+            )
+
+        if arguments.runtime_command != 'evaluate':
+            required_for_data_pipeline = {
+                'score': [
+                    ('-I/--full-input', 'full_inputs', None),
+                ],
+                'fit-produce': [
+                    ('-I/--full-input', 'full_inputs', None),
+                ],
+                'fit-score': [
+                    ('-I/--full-input', 'full_inputs', None),
+                ],
+            }.get(arguments.runtime_command, [])
+            mutually_exclusive_with_data_pipeline = {
+                'score': [
+                    ('-t/--test-input', 'test_inputs', None), ('-a/--score-input', 'score_inputs', None),
+                ],
+                'fit-produce': [
+                    ('-i/--input', 'inputs', None), ('-t/--test-input', 'test_inputs', None),
+                ],
+                'fit-score': [
+                    ('-i/--input', 'inputs', None), ('-t/--test-input', 'test_inputs', None), ('-a/--score-input', 'score_inputs', None),
+                ],
+            }.get(arguments.runtime_command, [])
+
+            if getattr(arguments, 'data_pipeline', None) is not None:
+                if any(getattr(arguments, dest, None) not in [default, None] for (name, dest, default) in mutually_exclusive_with_data_pipeline):
+                    subparser.error(
+                        '{command} with -d/--data-pipeline cannot have any of the following arguments: {arguments}'.format(
+                            command=arguments.runtime_command,
+                            arguments=', '.join(
+                                name for (name, dest, default) in mutually_exclusive_with_data_pipeline if getattr(arguments, dest, None) not in [default, None]
+                            ),
+                        )
+                    )
+                if any(getattr(arguments, dest, None) in [default, None] for (name, dest, default) in required_for_data_pipeline):
+                    subparser.error(
+                        '{command} with -d/--data-pipeline must have the following arguments: {arguments}'.format(
+                            command=arguments.runtime_command,
+                            arguments=', '.join(
+                                name for (name, dest, default) in required_for_data_pipeline if getattr(arguments, dest, None) in [default, None]
+                            ),
+                        )
+                    )
+            else:
+                if any(getattr(arguments, dest, None) in [default, None] for (name, dest, default) in mutually_exclusive_with_data_pipeline):
+                    subparser.error(
+                        '{command} requires either -d/--data-pipeline or the following arguments: {arguments}'.format(
+                            command=arguments.runtime_command,
+                            arguments=', '.join(
+                                name for (name, dest, default) in mutually_exclusive_with_data_pipeline if getattr(arguments, dest, None) in [default, None]
+                            ),
+                        )
+                    )
+
     else:
-        manual_config_with_defaults = [
-            ('-i/--input', 'inputs', None), ('-t/--test-input', 'test_inputs', None), ('-a/--score-input', 'score_inputs', None),
+        mutually_exclusive_with_pipeline_run = [
+            ('-i/--input', 'inputs', None), ('-t/--test-input', 'test_inputs', None), ('-a/--score-input', 'score_inputs', None), ('-I/--full-input', 'full_inputs', None),
             ('-r/--problem', 'problem', None), ('-p/--pipeline', 'pipeline', None), ('-d/--data-pipeline', 'data_pipeline', None),
             ('-n/--random-seed', 'random_seed', 0), ('-e/--metric', 'metrics', None), ('-Y/--scoring-param', 'scoring_params', None),
             ('--scoring-random-seed', 'scoring_random_seed', 0), ('-n/--scoring-pipeline', 'scoring_pipeline', runtime.DEFAULT_SCORING_PIPELINE_PATH),
             ('-y/--data-param', 'data_params', None), ('--data-split-file', 'data_split_file', None), ('--data-random-seed', 'data_random_seed', 0),
             ('--not-standard-pipeline', 'standard_pipeline', True),
         ]
-        if any(getattr(arguments, dest, None) not in [default, None] for (name, dest, default) in manual_config_with_defaults):
+        if any(getattr(arguments, dest, None) not in [default, None] for (name, dest, default) in mutually_exclusive_with_pipeline_run):
             subparser.error(
-                '-u/--input-run cannot be used with the following arguments: {manual_arguments}'.format(
-                    manual_arguments=', '.join(
-                        name for (name, dest, default) in manual_config_with_defaults if getattr(arguments, dest, None) not in [default, None]
+                '-u/--input-run cannot be used with the following arguments: {mutually_exclusive}'.format(
+                    mutually_exclusive=', '.join(
+                        name for (name, dest, default) in mutually_exclusive_with_pipeline_run if getattr(arguments, dest, None) not in [default, None]
                     ),
                 )
             )
 
     if not getattr(arguments, 'standard_pipeline', True) and getattr(arguments, 'output', None) is not None:
         subparser.error("you cannot save predictions for a non-standard pipeline")
+
+    if getattr(arguments, 'data_pipeline', None) and getattr(arguments, 'data_pipeline_run', None):
+        subparser.error("-d/--data-pipeline and --data-pipeline-run cannot be used at the same time")
 
     # Call a handler for the command.
     arguments.runtime_handler(
@@ -540,40 +673,68 @@ def runtime_handler(
     )
 
 
+def _data_preprocessing_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
+    if 'data_pipeline' not in skip_arguments:
+        parser.add_argument(
+            '-d', '--data-pipeline', action='store',
+            help="path to a data preparation pipeline file (.json, .yml, or .yaml) or pipeline ID",
+        )
+    if 'data_params' not in skip_arguments:
+        parser.add_argument(
+            '-y', '--data-param', nargs=2, action='append', metavar=('NAME', 'VALUE'), dest='data_params',
+            help="hyper-parameter name and its value for data preparation pipeline, can be specified multiple times, value should be JSON-serialized",
+        )
+    if 'data_split_file' not in skip_arguments:
+        parser.add_argument(
+            '--data-split-file', action='store',
+            help="reads the split file and populates \"primary_index_values\" hyper-parameter for data preparation pipeline with "
+                 "values from the \"d3mIndex\" column corresponding to the test data, use \"-\" for stdin",
+        )
+    if 'data_random_seed' not in skip_arguments:
+        parser.add_argument(
+            '--data-random-seed', type=int, action='store', default=0,
+            help="random seed to use for data preparation",
+        )
+
+
+def _common_runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
+    if 'context' not in skip_arguments:
+        parser.add_argument(
+            '-x', '--context', choices=utils.EnumArgProxy(metadata_base.Context), default=metadata_base.Context.TESTING.name, action='store',
+            help="in which context to run pipelines, default is TESTING",
+        )
+    if 'volumes_dir' not in skip_arguments:
+        parser.add_argument(
+            '-v', '--volumes', action='store', dest='volumes_dir',
+            help="path to a directory with static files required by primitives, in the standard directory structure (as obtained running \"python3 -m d3m primitive download\")",
+        )
+    if 'datasets_dir' not in skip_arguments:
+        parser.add_argument(
+            '-D', '--datasets', action='store', dest='datasets_dir',
+            help="path to a directory with datasets (and problem descriptions) to resolve IDs in pipeline run files",
+        )
+    if 'scratch_dir' not in skip_arguments:
+        parser.add_argument(
+            '--scratch', action='store', dest='scratch_dir',
+            help="path to a directory to store any temporary files needed during execution",
+        )
+    if 'worker_id' not in skip_arguments:
+        parser.add_argument(
+            '--worker-id', action='store',
+            help="globally unique identifier for the machine on which the runtime is running, has priority over D3M_WORKER_ID environment variable",
+        )
+
+
 def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.Tuple = ()) -> None:
     if 'random_seed' not in skip_arguments:
         parser.add_argument(
             '-n', '--random-seed', type=int, default=0, action='store', metavar='SEED',
             help="random seed to use",
         )
-    if 'context' not in skip_arguments:
-        parser.add_argument(
-            '-x', '--context', choices=[context.name for context in metadata_base.Context], default=metadata_base.Context.TESTING.name, action='store',
-            help="in which context to run pipelines, default is TESTING",
-        )
-    if 'volumes_dir' not in skip_arguments:
-        parser.add_argument(
-            '-v', '--volumes', action='store', dest='volumes_dir',
-            help="path to a directory with static files required by primitives, in the standard directory structure (as obtained running \"python3 -m d3m index download\")",
-        )
-    if 'datasets_dir' not in skip_arguments:
-        parser.add_argument(
-            '-d', '--datasets', action='store', dest='datasets_dir',
-            help="path to a directory with datasets (and problem descriptions) to resolve IDs in pipeline run files",
-        )
-    if 'scratch_dir' not in skip_arguments:
-        parser.add_argument(
-            '-s', '--scratch', action='store', dest='scratch_dir',
-            help="path to a directory to store any temporary files needed during execution",
-        )
-    if 'worker_id' not in skip_arguments:
-        parser.add_argument(
-            '--worker-id', action='store',
-            help="globally unique identifier for the machine on which the runtime is running",
-        )
+    _common_runtime_configure_parser(parser, skip_arguments=skip_arguments)
 
     subparsers = parser.add_subparsers(dest='runtime_command', title='commands')
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     fit_parser = subparsers.add_parser(
         'fit', help="fit a pipeline",
@@ -603,6 +764,10 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
         'evaluate', help="evaluate a pipeline",
         description="Run pipeline multiple times using an evaluation approach and compute scores for each run.",
     )
+    prepare_data_parser = subparsers.add_parser(
+        'prepare-data', help="prepare data and save the results",
+        description="Apply a data preparation pipeline to the input data and save the results.",
+    )
 
     if 'pipeline' not in skip_arguments:
         fit_parser.add_argument(
@@ -617,12 +782,27 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
     if 'inputs' not in skip_arguments:
         fit_parser.add_argument(
             '-i', '--input', action='append', metavar='INPUT', dest='inputs',
-            help="path or URI of an input train dataset",
+            help="path or URI of an input train data, or an input full data when used in combination with the data preparation pipeline",
         )
     if 'input_run' not in skip_arguments:
         fit_parser.add_argument(
             '-u', '--input-run', type=utils.FileType('r', encoding='utf8'), action='store',
             help="path to a pipeline run file with configuration, use \"-\" for stdin",
+        )
+    if 'data_pipeline_run' not in skip_arguments:
+        fit_parser.add_argument(
+            '--data-pipeline-run', action='store',
+            help="path to a pickled data preparation pipeline run",
+        )
+    if 'fold_group_uuid' not in skip_arguments:
+        fit_parser.add_argument(
+            '--fold-group-uuid', action='store', type=uuid.UUID,
+            help="fold group UUID to be set in the pipeline run",
+        )
+    if 'fold_index' not in skip_arguments:
+        fit_parser.add_argument(
+            '--fold-index', action='store', type=int, default=0,
+            help="fold index to be set in the pipeline run",
         )
     if 'save' not in skip_arguments:
         fit_parser.add_argument(
@@ -649,6 +829,7 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '-E', '--expose-produced-outputs', action='store', dest='expose_produced_outputs_dir',
             help="save to a directory produced outputs of all primitives from pipeline's fit run",
         )
+    _data_preprocessing_configure_parser(fit_parser, skip_arguments=skip_arguments)
     fit_parser.set_defaults(runtime_handler=runtime.fit_handler)
 
     if 'fitted_pipeline' not in skip_arguments:
@@ -659,12 +840,27 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
     if 'test_inputs' not in skip_arguments:
         produce_parser.add_argument(
             '-t', '--test-input', action='append', metavar='INPUT', dest='test_inputs',
-            help="path or URI of an input test dataset",
+            help="path or URI of an input test data, or an input full data when used in combination with the data preparation pipeline",
         )
     if 'input_run' not in skip_arguments:
         produce_parser.add_argument(
             '-u', '--input-run', type=utils.FileType('r', encoding='utf8'), action='store',
             help="path to a pipeline run file with configuration, use \"-\" for stdin",
+        )
+    if 'data_pipeline_run' not in skip_arguments:
+        produce_parser.add_argument(
+            '--data-pipeline-run', action='store',
+            help="path to a pickled data preparation pipeline run",
+        )
+    if 'fold_group_uuid' not in skip_arguments:
+        produce_parser.add_argument(
+            '--fold-group-uuid', action='store', type=uuid.UUID,
+            help="fold group UUID to be set in the pipeline run",
+        )
+    if 'fold_index' not in skip_arguments:
+        produce_parser.add_argument(
+            '--fold-index', action='store', type=int, default=0,
+            help="fold index to be set in the pipeline run",
         )
     if 'output' not in skip_arguments:
         produce_parser.add_argument(
@@ -681,6 +877,7 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '-E', '--expose-produced-outputs', action='store', dest='expose_produced_outputs_dir',
             help="save to a directory produced outputs of all primitives from pipeline's produce run",
         )
+    _data_preprocessing_configure_parser(produce_parser, skip_arguments=skip_arguments)
     produce_parser.set_defaults(runtime_handler=runtime.produce_handler)
 
     if 'fitted_pipeline' not in skip_arguments:
@@ -696,21 +893,36 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
     if 'test_inputs' not in skip_arguments:
         score_parser.add_argument(
             '-t', '--test-input', action='append', metavar='INPUT', dest='test_inputs',
-            help="path or URI of an input test dataset",
+            help="path or URI of an input test data",
         )
     if 'score_inputs' not in skip_arguments:
         score_parser.add_argument(
             '-a', '--score-input', action='append', metavar='INPUT', dest='score_inputs',
-            help="path or URI of an input score dataset",
+            help="path or URI of an input score data",
         )
     if 'input_run' not in skip_arguments:
         score_parser.add_argument(
             '-u', '--input-run', type=utils.FileType('r', encoding='utf8'), action='store',
             help="path to a pipeline run file with configuration, use \"-\" for stdin",
         )
+    if 'data_pipeline_run' not in skip_arguments:
+        score_parser.add_argument(
+            '--data-pipeline-run', action='store',
+            help="path to a pickled data preparation pipeline run",
+        )
+    if 'fold_group_uuid' not in skip_arguments:
+        score_parser.add_argument(
+            '--fold-group-uuid', action='store', type=uuid.UUID,
+            help="fold group UUID to be set in the pipeline run",
+        )
+    if 'fold_index' not in skip_arguments:
+        score_parser.add_argument(
+            '--fold-index', action='store', type=int, default=0,
+            help="fold index to be set in the pipeline run",
+        )
     if 'metrics' not in skip_arguments:
         score_parser.add_argument(
-            '-e', '--metric', choices=[metric.name for metric in problem_module.PerformanceMetric],
+            '-e', '--metric', choices=utils.EnumArgProxy(problem_module.PerformanceMetric),
             action='append', metavar='METRIC', dest='metrics',
             help="metric to use, can be specified multiple times, default from problem description",
         )
@@ -739,6 +951,12 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '-E', '--expose-produced-outputs', action='store', dest='expose_produced_outputs_dir',
             help="save to a directory produced outputs of all primitives from pipeline's produce run",
         )
+    if 'full_inputs' not in skip_arguments:
+        score_parser.add_argument(
+            '-I', '--full-input', action='append', metavar='INPUT', dest='full_inputs',
+            help="path or URI of an input full data, used in combination with the data preparation pipeline",
+        )
+    _data_preprocessing_configure_parser(score_parser, skip_arguments=skip_arguments)
     score_parser.set_defaults(runtime_handler=runtime.score_handler)
 
     if 'pipeline' not in skip_arguments:
@@ -754,17 +972,32 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
     if 'inputs' not in skip_arguments:
         fit_produce_parser.add_argument(
             '-i', '--input', action='append', metavar='INPUT', dest='inputs',
-            help="path or URI of an input train dataset",
+            help="path or URI of an input train data",
         )
     if 'test_inputs' not in skip_arguments:
         fit_produce_parser.add_argument(
             '-t', '--test-input', action='append', metavar='INPUT', dest='test_inputs',
-            help="path or URI of an input test dataset",
+            help="path or URI of an input test data",
         )
     if 'input_run' not in skip_arguments:
         fit_produce_parser.add_argument(
             '-u', '--input-run', type=utils.FileType('r', encoding='utf8'), action='store',
             help="path to a pipeline run file with configuration, use \"-\" for stdin",
+        )
+    if 'data_pipeline_run' not in skip_arguments:
+        fit_produce_parser.add_argument(
+            '--data-pipeline-run', action='store',
+            help="path to a pickled data preparation pipeline run",
+        )
+    if 'fold_group_uuid' not in skip_arguments:
+        fit_produce_parser.add_argument(
+            '--fold-group-uuid', action='store', type=uuid.UUID,
+            help="fold group UUID to be set in the pipeline run",
+        )
+    if 'fold_index' not in skip_arguments:
+        fit_produce_parser.add_argument(
+            '--fold-index', action='store', type=int, default=0,
+            help="fold index to be set in the pipeline run",
         )
     if 'save' not in skip_arguments:
         fit_produce_parser.add_argument(
@@ -791,6 +1024,12 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '-E', '--expose-produced-outputs', action='store', dest='expose_produced_outputs_dir',
             help="save to a directory produced outputs of all primitives from pipeline's produce run",
         )
+    if 'full_inputs' not in skip_arguments:
+        fit_produce_parser.add_argument(
+            '-I', '--full-input', action='append', metavar='INPUT', dest='full_inputs',
+            help="path or URI of an input full data, used in combination with the data preparation pipeline",
+        )
+    _data_preprocessing_configure_parser(fit_produce_parser, skip_arguments=skip_arguments)
     fit_produce_parser.set_defaults(runtime_handler=runtime.fit_produce_handler)
 
     if 'pipeline' not in skip_arguments:
@@ -811,26 +1050,41 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
     if 'inputs' not in skip_arguments:
         fit_score_parser.add_argument(
             '-i', '--input', action='append', metavar='INPUT', dest='inputs',
-            help="path or URI of an input train dataset",
+            help="path or URI of an input train data",
         )
     if 'test_inputs' not in skip_arguments:
         fit_score_parser.add_argument(
             '-t', '--test-input', action='append', metavar='INPUT', dest='test_inputs',
-            help="path or URI of an input test dataset",
+            help="path or URI of an input test data",
         )
     if 'score_inputs' not in skip_arguments:
         fit_score_parser.add_argument(
             '-a', '--score-input', action='append', metavar='INPUT', dest='score_inputs',
-            help="path or URI of an input score dataset",
+            help="path or URI of an input score data",
         )
     if 'input_run' not in skip_arguments:
         fit_score_parser.add_argument(
             '-u', '--input-run', type=utils.FileType('r', encoding='utf8'), action='store',
             help="path to a pipeline run file with configuration, use \"-\" for stdin",
         )
+    if 'data_pipeline_run' not in skip_arguments:
+        fit_score_parser.add_argument(
+            '--data-pipeline-run', action='store',
+            help="path to a pickled data preparation pipeline run",
+        )
+    if 'fold_group_uuid' not in skip_arguments:
+        fit_score_parser.add_argument(
+            '--fold-group-uuid', action='store', type=uuid.UUID,
+            help="fold group UUID to be set in the pipeline run",
+        )
+    if 'fold_index' not in skip_arguments:
+        fit_score_parser.add_argument(
+            '--fold-index', action='store', type=int, default=0,
+            help="fold index to be set in the pipeline run",
+        )
     if 'metrics' not in skip_arguments:
         fit_score_parser.add_argument(
-            '-e', '--metric', choices=[metric.name for metric in problem_module.PerformanceMetric],
+            '-e', '--metric', choices=utils.EnumArgProxy(problem_module.PerformanceMetric),
             action='append', metavar='METRIC', dest='metrics',
             help="metric to use, can be specified multiple times, default from problem description",
         )
@@ -869,6 +1123,12 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '-E', '--expose-produced-outputs', action='store', dest='expose_produced_outputs_dir',
             help="save to a directory produced outputs of all primitives from pipeline's produce run",
         )
+    if 'full_inputs' not in skip_arguments:
+        fit_score_parser.add_argument(
+            '-I', '--full-input', action='append', metavar='INPUT', dest='full_inputs',
+            help="path or URI of an input full data, used in combination with the data preparation pipeline",
+        )
+    _data_preprocessing_configure_parser(fit_score_parser, skip_arguments=skip_arguments)
     fit_score_parser.set_defaults(runtime_handler=runtime.fit_score_handler)
 
     if 'scoring_pipeline' not in skip_arguments:
@@ -883,17 +1143,17 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
         )
     if 'predictions' not in skip_arguments:
         score_predictions_parser.add_argument(
-            '-p', '--predictions', type=utils.FileType('r', encoding='utf8'), action='store', required=True,
+            '-p', '--predictions', action='store', required=True,
             help="path to a predictions file, use \"-\" for stdin",
         )
     if 'score_inputs' not in skip_arguments:
         score_predictions_parser.add_argument(
             '-a', '--score-input', action='append', metavar='INPUT', dest='score_inputs', required=True,
-            help="path or URI of an input score dataset",
+            help="path or URI of an input score data, or an input full data when used in combination with the data preparation pipeline",
         )
     if 'metrics' not in skip_arguments:
         score_predictions_parser.add_argument(
-            '-e', '--metric', choices=[metric.name for metric in problem_module.PerformanceMetric],
+            '-e', '--metric', choices=utils.EnumArgProxy(problem_module.PerformanceMetric),
             action='append', metavar='METRIC', dest='metrics',
             help="metric to use, can be specified multiple times, default from problem description",
         )
@@ -917,17 +1177,13 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '--predictions-random-seed', type=int, action='store', default=None,
             help="random seed used for predictions",
         )
+    _data_preprocessing_configure_parser(score_predictions_parser, skip_arguments=skip_arguments)
     score_predictions_parser.set_defaults(runtime_handler=runtime.score_predictions_handler)
 
     if 'pipeline' not in skip_arguments:
         evaluate_parser.add_argument(
             '-p', '--pipeline', action='store',
             help="path to a pipeline file (.json, .yml, or .yaml) or pipeline ID"
-        )
-    if 'data_pipeline' not in skip_arguments:
-        evaluate_parser.add_argument(
-            '-d', '--data-pipeline', action='store',
-            help="path to a data preparation pipeline file (.json, .yml, or .yaml) or pipeline ID",
         )
     if 'scoring_pipeline' not in skip_arguments:
         evaluate_parser.add_argument(
@@ -942,27 +1198,16 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
     if 'inputs' not in skip_arguments:
         evaluate_parser.add_argument(
             '-i', '--input', action='append', metavar='INPUT', dest='inputs',
-            help="path or URI of an input full dataset",
+            help="path or URI of an input full data",
         )
     if 'input_run' not in skip_arguments:
         evaluate_parser.add_argument(
             '-u', '--input-run', type=utils.FileType('r', encoding='utf8'), action='store',
             help="path to a pipeline run file with configuration, use \"-\" for stdin",
         )
-    if 'data_params' not in skip_arguments:
-        evaluate_parser.add_argument(
-            '-y', '--data-param', nargs=2, action='append', metavar=('NAME', 'VALUE'), dest='data_params',
-            help="hyper-parameter name and its value for data preparation pipeline, can be specified multiple times, value should be JSON-serialized",
-        )
-    if 'data_split_file' not in skip_arguments:
-        evaluate_parser.add_argument(
-            '--data-split-file', type=utils.FileType('r', encoding='utf8'), action='store',
-            help="reads the split file and populates \"primary_index_values\" hyper-parameter for data preparation pipeline with "
-                 "values from the \"d3mIndex\" column corresponding to the test data, use \"-\" for stdin",
-        )
     if 'metrics' not in skip_arguments:
         evaluate_parser.add_argument(
-            '-e', '--metric', choices=[metric.name for metric in problem_module.PerformanceMetric], action='append', metavar='METRIC', dest='metrics',
+            '-e', '--metric', choices=utils.EnumArgProxy(problem_module.PerformanceMetric), action='append', metavar='METRIC', dest='metrics',
             help="metric to use, can be specified multiple times, default from problem description",
         )
     if 'scoring_params' not in skip_arguments:
@@ -980,17 +1225,31 @@ def runtime_configure_parser(parser: argparse.ArgumentParser, *, skip_arguments:
             '-O', '--output-run', type=utils.FileType('w', encoding='utf8'), action='store',
             help="save pipeline run documents to a YAML file, use \"-\" for stdin",
         )
-    if 'data_random_seed' not in skip_arguments:
-        evaluate_parser.add_argument(
-            '--data-random-seed', type=int, action='store', default=0,
-            help="random seed to use for data preparation",
-        )
     if 'scoring_random_seed' not in skip_arguments:
         evaluate_parser.add_argument(
             '--scoring-random-seed', type=int, action='store', default=0,
             help="random seed to use for scoring",
         )
+    _data_preprocessing_configure_parser(evaluate_parser, skip_arguments=skip_arguments)
     evaluate_parser.set_defaults(runtime_handler=runtime.evaluate_handler)
+
+    if 'problem' not in skip_arguments:
+        prepare_data_parser.add_argument(
+            '-r', '--problem', action='store',
+            help="path or URI to a problem description",
+        )
+    if 'inputs' not in skip_arguments:
+        prepare_data_parser.add_argument(
+            '-i', '--input', action='append', metavar='INPUT', dest='inputs',
+            help="path or URI of an input full data",
+        )
+    if 'save_dir' not in skip_arguments:
+        prepare_data_parser.add_argument(
+            '-s', '--save', action='store', dest='save_dir', required=True,
+            help="directory where to save the data preparation results",
+        )
+    _data_preprocessing_configure_parser(prepare_data_parser, skip_arguments=skip_arguments)
+    prepare_data_parser.set_defaults(runtime_handler=runtime.prepare_data_handler)
 
 
 def handler(
@@ -1057,6 +1316,15 @@ def handler(
             problem_resolver=problem_resolver,
         )
 
+    elif arguments.d3m_command == 'openml':
+        openml_handler(
+            arguments,
+            subparser,
+            pipeline_resolver=pipeline_resolver,
+            dataset_resolver=dataset_resolver,
+            problem_resolver=problem_resolver,
+        )
+
     else:
         raise exceptions.InvalidStateError("Cannot find a suitable command handler.")
 
@@ -1088,7 +1356,7 @@ def configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.
         )
     if 'compute_digest' not in skip_arguments:
         parser.add_argument(
-            '--compute-digest', choices=[compute_digest.name for compute_digest in dataset_module.ComputeDigest],
+            '--compute-digest', choices=utils.EnumArgProxy(dataset_module.ComputeDigest),
             default=dataset_module.ComputeDigest.ONLY_IF_MISSING.name, action='store',
             help="when loading datasets, when to compute their digests, default is ONLY_IF_MISSING",
         )
@@ -1102,6 +1370,11 @@ def configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.
             '--strict-digest', default=False, action='store_true',
             help="when loading datasets, pipelines, primitives, or problem descriptions, if computed digest does not match the one provided in metadata, raise an exception?"
         )
+    if 'modules' not in skip_arguments:
+        parser.add_argument(
+            '-M', '--module', action='append', metavar='PATH', dest='modules',
+            help="a Python module name to import at startup, can be specified multiple times",
+        )
     if 'version' not in skip_arguments:
         parser.add_argument(
             '-V', '--version', action='version', version=str(__version__),
@@ -1109,7 +1382,7 @@ def configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.
         )
 
     subparsers = parser.add_subparsers(dest='d3m_command', title='commands', parser_class=_ArgumentParser)
-    subparsers.required = True  # type: ignore
+    subparsers.required = True
 
     primitive_parser = subparsers.add_parser(
         'primitive', help="describe, validate, explore, and manage primitives",
@@ -1117,7 +1390,7 @@ def configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.
     )
     # Legacy command name. Deprecated. We do not use "aliases" argument to "add_parser"
     # because we want this command to be hidden.
-    subparsers._name_parser_map['index'] = primitive_parser  # type: ignore
+    subparsers._name_parser_map['index'] = primitive_parser
 
     primitive_configure_parser(primitive_parser, skip_arguments=skip_arguments)
 
@@ -1156,17 +1429,56 @@ def configure_parser(parser: argparse.ArgumentParser, *, skip_arguments: typing.
 
     runtime_configure_parser(runtime_parser, skip_arguments=skip_arguments)
 
+    openml_parser = subparsers.add_parser(
+        'openml', help="use OpenML",
+        description="Use OpenML.",
+    )
+
+    openml_configure_parser(openml_parser, skip_arguments=skip_arguments)
+
     # We set metavar at the end, when we know all subparsers. We want
     # "index" command to be hidden because it is deprecated.
-    subparsers.metavar = '{' + ','.join(name for name in subparsers._name_parser_map.keys() if name != 'index') + '}'  # type: ignore
+    subparsers.metavar = '{' + ','.join(name for name in subparsers._name_parser_map.keys() if name != 'index') + '}'
+
+
+def parse_modules_arguments(argv: typing.Sequence) -> typing.Sequence:
+    parser = argparse.ArgumentParser(prog='d3m', description="Run a D3M core package command.")
+    parser.add_argument(
+        '-M', '--module', action='append', metavar='PATH', dest='modules',
+        help="a Python module name to import at startup, can be specified multiple times",
+    )
+
+    # We care only about known arguments here.
+    arguments, _ = parser.parse_known_args(argv[1:])
+
+    return getattr(arguments, 'modules', []) or []
 
 
 def main(argv: typing.Sequence) -> None:
+    # We do this, before any real parsing of arguments. This allows imported modules to modify how parsing
+    # of arguments is done (e.g., register additional metrics).
+    for module in parse_modules_arguments(argv):
+        try:
+            importlib.import_module(module)
+        except Exception as error:
+            raise ImportError("Error importing \"{module}\".".format(module=module)) from error
+
+    # Now we parse arguments once more, for real.
     parser = argparse.ArgumentParser(prog='d3m', description="Run a D3M core package command.")
     configure_parser(parser)
 
     arguments = parser.parse_args(argv[1:])
 
-    logging.basicConfig(level=arguments.logging_level.upper())
+    try:
+        logging.basicConfig(level=arguments.logging_level.upper())
 
-    handler(arguments, parser)
+        if not faulthandler.is_enabled():
+            faulthandler.enable(file=sys.__stderr__)
+
+        handler(arguments, parser)
+
+    finally:
+        # We close any file handlers.
+        for value in arguments.__dict__.values():
+            if hasattr(value, 'close'):
+                value.close()

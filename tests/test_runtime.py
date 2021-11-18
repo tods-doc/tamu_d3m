@@ -9,6 +9,7 @@ import unittest
 
 import jsonschema
 import pandas
+import numpy
 
 COMMON_PRIMITIVES_DIR = os.path.join(os.path.dirname(__file__), 'common-primitives')
 # NOTE: This insertion should appear before any code attempting to resolve or load primitives,
@@ -24,6 +25,8 @@ from common_primitives.construct_predictions import ConstructPredictionsPrimitiv
 from common_primitives.no_split import NoSplitDatasetSplitPrimitive
 from common_primitives.remove_columns import RemoveColumnsPrimitive
 from common_primitives.simple_profiler import SimpleProfilerPrimitive
+from common_primitives.extract_columns_semantic_types import ExtractColumnsBySemanticTypesPrimitive
+from common_primitives.kfold_split import KFoldDatasetSplitPrimitive
 
 TEST_PRIMITIVES_DIR = os.path.join(os.path.dirname(__file__), 'data', 'primitives')
 sys.path.insert(0, TEST_PRIMITIVES_DIR)
@@ -44,7 +47,7 @@ from test_primitives.multi_data_hyperparam import MultiDataHyperparamPrimitive
 from test_primitives.primitive_hyperparam import PrimitiveHyperparamPrimitive
 
 from d3m import container, exceptions, index, runtime, utils
-from d3m.metadata import base as metadata_base, hyperparams, pipeline as pipeline_module, problem
+from d3m.metadata import base as metadata_base, hyperparams, params, pipeline as pipeline_module, pipeline_run as pipeline_run_module, problem
 from d3m.metadata.pipeline_run import PIPELINE_RUN_SCHEMA_VALIDATOR, PipelineRun, RuntimeEnvironment, _validate_pipeline_run_status_consistency, _validate_pipeline_run_random_seeds, _validate_pipeline_run_timestamps
 from d3m.primitive_interfaces import base, transformer
 
@@ -196,6 +199,18 @@ def set_additionProperties_False(schema_json):
             set_additionProperties_False(item)
 
 
+ExtraArgumentInputs = container.Dataset
+ExtraArgumentOutputs = container.Dataset
+
+
+class ExtraArgumentHyperparams(hyperparams.Hyperparams):
+    pass
+
+
+class ExtraArgumentParams(params.Params):
+    pass
+
+
 class TestRuntime(unittest.TestCase):
     def setUp(self):
         self.test_dir = tempfile.mkdtemp()
@@ -230,7 +245,9 @@ class TestRuntime(unittest.TestCase):
             'd3m.primitives.data_transformation.construct_predictions.Common': ConstructPredictionsPrimitive,
             'd3m.primitives.evaluation.no_split_dataset_split.Common': NoSplitDatasetSplitPrimitive,
             'd3m.primitives.data_transformation.remove_columns.Common': RemoveColumnsPrimitive,
-            'd3m.primitives.schema_discovery.profiler.Common': SimpleProfilerPrimitive
+            'd3m.primitives.schema_discovery.profiler.Common': SimpleProfilerPrimitive,
+            'd3m.primitives.data_transformation.extract_columns_by_semantic_types.Common': ExtractColumnsBySemanticTypesPrimitive,
+            'd3m.primitives.evaluation.kfold_dataset_split.Common': KFoldDatasetSplitPrimitive,
         }
 
         # To hide any logging or stdout output.
@@ -242,6 +259,32 @@ class TestRuntime(unittest.TestCase):
 
             # We have to do it here because it depends on other primitives being first registered.
             index.register_primitive('d3m.primitives.operator.dataset_map.DataFrameCommon', DataFrameDatasetMapPrimitive)
+
+            class ExtraArgumentPrimitive(transformer.TransformerPrimitiveBase[ExtraArgumentInputs, ExtraArgumentOutputs, ExtraArgumentHyperparams]):
+                metadata = metadata_base.PrimitiveMetadata({
+                    'id': '13d2174a-5502-4eeb-84b2-a12f0e7e8b6e',
+                    'version': '0.1.0',
+                    'name': "Extra Argument Primitive",
+                    'python_path': 'd3m.primitives.test.ExtraArgumentPrimitive',
+                    'algorithm_types': [
+                        metadata_base.PrimitiveAlgorithmType.IDENTITY_FUNCTION,
+                    ],
+                    'primitive_family': metadata_base.PrimitiveFamily.OPERATOR,
+                })
+
+                def produce(self, *, inputs: ExtraArgumentInputs, timeout: float = None, iterations: int = None) -> base.CallResult[ExtraArgumentOutputs]:
+                    return base.CallResult(inputs)
+
+                def produce_another(self, *, inputs: ExtraArgumentInputs, extra_data: ExtraArgumentInputs, timeout: float = None, iterations: int = None) -> base.CallResult[ExtraArgumentOutputs]:
+                    return base.CallResult(inputs)
+
+                def multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: ExtraArgumentInputs, extra_data: ExtraArgumentInputs, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
+                    return self._multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, extra_data=extra_data)
+
+                def fit_multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: ExtraArgumentInputs, extra_data: ExtraArgumentInputs, timeout: float = None, iterations: int = None) -> base.MultiCallResult:
+                    return self._fit_multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, extra_data=extra_data)
+
+            index.register_primitive('d3m.primitives.test.ExtraArgumentPrimitive', ExtraArgumentPrimitive)
 
         # We create runtime environment ourselves so that it is done only once.
         with utils.silence():
@@ -257,6 +300,15 @@ class TestRuntime(unittest.TestCase):
                 },
             )
 
+    def test_produce_memory_leak(self):
+        # Produce method had a resource leak when certain errors occurred, e.g.,
+        # temporary files were left around. This test is to prevent a regression.
+
+        tmp_before = os.listdir("/tmp/")
+        self.test_pipeline_run_failure()
+        tmp_after = os.listdir("/tmp/")
+        self.assertEqual(tmp_after, tmp_before)
+
     def test_basic(self):
         with open(os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'random-sample.yml'), 'r') as pipeline_file:
             p = pipeline_module.Pipeline.from_yaml(pipeline_file, resolver=Resolver())
@@ -265,7 +317,7 @@ class TestRuntime(unittest.TestCase):
 
         inputs = [container.List([0, 1, 42], generate_metadata=True)]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertTrue(result.pipeline_run)
@@ -280,7 +332,7 @@ class TestRuntime(unittest.TestCase):
             [-1.7062701906250126 + 1],
         ])
 
-        result = r.produce(inputs, return_values=['outputs.0'])
+        result = r.produce(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -297,7 +349,7 @@ class TestRuntime(unittest.TestCase):
         pickled = pickle.dumps(r)
         restored = pickle.loads(pickled)
 
-        result = restored.produce(inputs, return_values=['outputs.0'])
+        result = restored.produce(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -317,7 +369,7 @@ class TestRuntime(unittest.TestCase):
 
         inputs = [container.List([0, 1, 42], generate_metadata=True)]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -337,7 +389,7 @@ class TestRuntime(unittest.TestCase):
 
         inputs = [container.List([0, 1, 42], generate_metadata=True)]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -367,7 +419,7 @@ class TestRuntime(unittest.TestCase):
         for df in inputs:
             df.metadata = df.metadata.add_semantic_type((metadata_base.ALL_ELEMENTS, 1), 'https://metadata.datadrivendiscovery.org/types/PredictedTarget')
 
-        result = r.fit(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
         dataframe = result.values['outputs.0']
 
@@ -392,8 +444,8 @@ class TestRuntime(unittest.TestCase):
         }
 
         step_0 = pipeline_module.PrimitiveStep(primitive_description=step_0_primitive_description)
-        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='inputs.0')
-        step_0.add_argument(name='outputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='inputs.1')
+        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.0')
+        step_0.add_argument(name='outputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.1')
         step_0.add_output('produce')
         pipeline_description.add_step(step_0)
 
@@ -408,7 +460,7 @@ class TestRuntime(unittest.TestCase):
         }
 
         step_1 = pipeline_module.PrimitiveStep(primitive_description=step_1_primitive_description)
-        step_1.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='inputs.0')
+        step_1.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.0')
         step_1.add_hyperparameter(name='primitive_1', argument_type=metadata_base.ArgumentType.PRIMITIVE, data=0)
         step_1.add_hyperparameter(name='primitive_2', argument_type=metadata_base.ArgumentType.PRIMITIVE, data=0)
         step_1.add_output('produce')
@@ -420,22 +472,7 @@ class TestRuntime(unittest.TestCase):
 
         inputs = [container.List([1, 2, 3, 4, 5], generate_metadata=True), container.List([2, 4, 6, 8, 100], generate_metadata=True)]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
-        result.check_success()
-
-        self.assertEqual(len(result.values), 1)
-
-        results = result.values['outputs.0']
-
-        self.assertEqual(results, [
-            11.2,
-            22.4,
-            33.599999999999994,
-            44.8,
-            56.0,
-        ])
-
-        result = r.produce(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -451,9 +488,24 @@ class TestRuntime(unittest.TestCase):
         ])
 
         # Random seed should be different from 0 for hyper-parameter primitive instance.
-        self.assertEqual(result.pipeline_run.previous_pipeline_run.steps[1].hyperparams['primitive_1'].random_seed, 1)
+        self.assertEqual(result.pipeline_run.steps[1].hyperparams['primitive_1'].random_seed, 1)
         # Primitive should not be the same instance.
-        self.assertIsNot(result.pipeline_run.previous_pipeline_run.steps[1].hyperparams['primitive_1'], result.pipeline_run.previous_pipeline_run.steps[1].hyperparams['primitive_2'])
+        self.assertIsNot(result.pipeline_run.steps[1].hyperparams['primitive_1'], result.pipeline_run.steps[1].hyperparams['primitive_2'])
+
+        result = r.produce(inputs, outputs_to_expose=['outputs.0'])
+        result.check_success()
+
+        self.assertEqual(len(result.values), 1)
+
+        results = result.values['outputs.0']
+
+        self.assertEqual(results, [
+            11.2,
+            22.4,
+            33.599999999999994,
+            44.8,
+            56.0,
+        ])
 
         pickle._dumps(r)
 
@@ -475,7 +527,7 @@ class TestRuntime(unittest.TestCase):
         }
 
         step_0 = pipeline_module.PrimitiveStep(primitive_description=step_0_primitive_description)
-        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='inputs.0')
+        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.0')
         step_0.add_hyperparameter(name='primitive_1', argument_type=metadata_base.ArgumentType.VALUE, data=null_primitive)
         step_0.add_hyperparameter(name='primitive_2', argument_type=metadata_base.ArgumentType.VALUE, data=null_primitive)
         step_0.add_output('produce')
@@ -487,18 +539,7 @@ class TestRuntime(unittest.TestCase):
 
         inputs = [container.List([1, 2, 3, 4, 5], generate_metadata=True)]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
-        result.check_success()
-
-        self.assertEqual(len(result.values), 1)
-
-        results = result.values['outputs.0']
-
-        self.assertEqual(results, [
-            2, 4, 6, 8, 10,
-        ])
-
-        result = r.produce(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -510,7 +551,18 @@ class TestRuntime(unittest.TestCase):
         ])
 
         # Primitive should not be the same instance.
-        self.assertIsNot(result.pipeline_run.previous_pipeline_run.steps[0].hyperparams['primitive_1'], result.pipeline_run.previous_pipeline_run.steps[0].hyperparams['primitive_2'])
+        self.assertIsNot(result.pipeline_run.steps[0].hyperparams['primitive_1'], result.pipeline_run.steps[0].hyperparams['primitive_2'])
+
+        result = r.produce(inputs, outputs_to_expose=['outputs.0'])
+        result.check_success()
+
+        self.assertEqual(len(result.values), 1)
+
+        results = result.values['outputs.0']
+
+        self.assertEqual(results, [
+            2, 4, 6, 8, 10,
+        ])
 
         pickle.dumps(r)
 
@@ -536,7 +588,7 @@ class TestRuntime(unittest.TestCase):
         }
 
         step_0 = pipeline_module.PrimitiveStep(primitive_description=step_0_primitive_description)
-        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='inputs.0')
+        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.0')
         step_0.add_hyperparameter(name='primitive_1', argument_type=metadata_base.ArgumentType.VALUE, data=primitive)
         step_0.add_hyperparameter(name='primitive_2', argument_type=metadata_base.ArgumentType.VALUE, data=primitive)
         step_0.add_output('produce')
@@ -548,18 +600,7 @@ class TestRuntime(unittest.TestCase):
 
         inputs = [container.List([1, 2, 3, 4, 5], generate_metadata=True)]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
-        result.check_success()
-
-        self.assertEqual(len(result.values), 1)
-
-        results = result.values['outputs.0']
-
-        self.assertEqual(results, [
-            2, 4, 6, 8, 10,
-        ])
-
-        result = r.produce(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -571,8 +612,19 @@ class TestRuntime(unittest.TestCase):
         ])
 
         # Primitive should not be the same instance.
-        self.assertIsNot(null_primitive, result.pipeline_run.previous_pipeline_run.steps[0].hyperparams['primitive_1'])
-        self.assertIsNot(result.pipeline_run.previous_pipeline_run.steps[0].hyperparams['primitive_1'], result.pipeline_run.previous_pipeline_run.steps[0].hyperparams['primitive_2'])
+        self.assertIsNot(null_primitive, result.pipeline_run.steps[0].hyperparams['primitive_1'])
+        self.assertIsNot(result.pipeline_run.steps[0].hyperparams['primitive_1'], result.pipeline_run.steps[0].hyperparams['primitive_2'])
+
+        result = r.produce(inputs, outputs_to_expose=['outputs.0'])
+        result.check_success()
+
+        self.assertEqual(len(result.values), 1)
+
+        results = result.values['outputs.0']
+
+        self.assertEqual(results, [
+            2, 4, 6, 8, 10,
+        ])
 
         pickle.dumps(r)
 
@@ -651,13 +703,13 @@ class TestRuntime(unittest.TestCase):
         return inputs
 
     def _fit_pipeline(
-        self, pipeline, inputs, problem_description=None, context=metadata_base.Context.TESTING, return_values=None
+        self, pipeline, inputs, problem_description=None, context=metadata_base.Context.TESTING, outputs_to_expose=None
     ):
         r = runtime.Runtime(
             pipeline, problem_description=problem_description, context=context,
             environment=self.runtime_enviroment,
         )
-        fit_result = r.fit(inputs, return_values=return_values)
+        fit_result = r.fit(inputs, outputs_to_expose=outputs_to_expose)
         self.assertTrue(fit_result.pipeline_run)
         # We fake that inputs were added even if this is not a standard pipeline.
         # TODO: Make tests not require this.
@@ -737,10 +789,10 @@ class TestRuntime(unittest.TestCase):
         pipeline_runs = self._fit_and_produce_pipeline(pipe, inputs)
         self._check_pipelines_valid_and_succeeded(pipeline_runs)
 
-    def test_pipeline_fit_with_return_values(self):
+    def test_pipeline_fit_with_outputs_to_expose(self):
         inputs = self._get_inputs()
         pipe = self._build_pipeline('cf2e4f93-4b9a-4a49-9ab5-92927b3125df')
-        pipeline_runs = self._fit_pipeline(pipe, inputs, return_values=['steps.0.produce'])
+        pipeline_runs = self._fit_pipeline(pipe, inputs, outputs_to_expose=['steps.0.produce'])
         self._check_pipelines_valid_and_succeeded([pipeline_runs])
 
     def test_pipeline_run_failure(self):
@@ -921,14 +973,14 @@ class TestRuntime(unittest.TestCase):
 
     def get_data(self, dataset_name='iris_dataset_1', problem_name='iris_problem_1'):
         if problem_name:
-            problem_doc_path = os.path.join(
+            problem_doc_path = os.path.abspath(os.path.join(
                 os.path.dirname(__file__), 'data', 'problems', problem_name, 'problemDoc.json'
-            )
-            problem_description = problem.Problem.load('file://' + problem_doc_path)
+            ))
+            problem_description = problem.Problem.load(utils.path_to_uri(problem_doc_path))
         else:
             problem_description = None
 
-        datasetDoc_path = 'file://' + os.path.join(os.path.dirname(__file__), 'data', 'datasets', dataset_name, 'datasetDoc.json')
+        datasetDoc_path = utils.path_to_uri(os.path.abspath(os.path.join(os.path.dirname(__file__), 'data', 'datasets', dataset_name, 'datasetDoc.json')))
         iris_dataset = container.Dataset.load(datasetDoc_path)
         return problem_description, iris_dataset
 
@@ -1131,8 +1183,7 @@ class TestRuntime(unittest.TestCase):
         self.assertFalse(fit_result.has_error(), fit_result.error)
         self.assertFalse(data_result.has_error(), data_result.error)
 
-        with self.assertRaisesRegex(exceptions.InvalidStateError, "Pipeline run for a non-standard pipeline cannot be converted to a JSON structure."):
-            data_result.pipeline_run.to_json_structure()
+        self._validate_pipeline_run_structure(data_result.pipeline_run.to_json_structure())
 
         runtime.combine_pipeline_runs(
             fit_result.pipeline_run, data_pipeline_run=data_result.pipeline_run,
@@ -1140,6 +1191,154 @@ class TestRuntime(unittest.TestCase):
         self.assertFalse(fit_result.has_error(), fit_result.error)
         self.assertEqual(len(outputs), 3)
         self._validate_pipeline_run_structure(fit_result.pipeline_run.to_json_structure())
+
+    def test_save_prepare_data(self):
+        with open(
+            os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'data-preparation-no-split.yml'),
+            'r',
+        ) as data_pipeline_file:
+            data_pipeline = pipeline_module.Pipeline.from_yaml(data_pipeline_file, resolver=Resolver())
+
+        iris_problem, iris_dataset = self.get_data(dataset_name='iris_dataset_1', problem_name='iris_problem_1')
+        inputs = [iris_dataset]
+
+        save_path = os.path.join(self.test_dir, 'iris_dataset_1')
+        runtime.prepare_data_and_save(
+            save_dir=save_path, data_pipeline=data_pipeline, problem_description=iris_problem, inputs=inputs, data_params={},
+            context=metadata_base.Context.TESTING, runtime_environment=self.runtime_enviroment,
+        )
+
+        pipeline_run_path = os.path.join(save_path, 'data_preparation_pipeline_run.pkl')
+
+        # Check if the pipeline run exists.
+        self.assertEqual(os.path.isfile(pipeline_run_path), True)
+
+        dataset_doc = 'datasetDoc.json'
+        table = os.path.join('tables', 'learningData.csv')
+        dataset_dir = lambda directory: os.path.join(save_path, directory, 'dataset_{}'.format(directory))
+
+        problem_dir = lambda directory: os.path.join(
+            save_path, directory, 'problem_{}'.format(directory), 'problemDoc.json'
+        )
+
+        for split in ['TRAIN', 'TEST', 'SCORE']:
+            # Check if learningdata is created
+            self.assertEqual(os.path.isfile(os.path.join(dataset_dir(split), table)), True)
+
+            # Check if datasetDoc is created
+            self.assertEqual(os.path.isfile(os.path.join(dataset_dir(split), dataset_doc)), True)
+
+            # Check for problemDoc is created
+            self.assertEqual(os.path.isfile(os.path.join(problem_dir(split))), True)
+
+    def test_evaluate_with_prepared_data(self):
+        with open(
+            os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'data-preparation-tabular-cross-validation.yml'),
+            'r',
+        ) as data_pipeline_file:
+            data_pipeline = pipeline_module.Pipeline.from_yaml(data_pipeline_file, resolver=Resolver())
+
+        with open(
+            os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'random-forest-classifier.yml'),
+            'r',
+        ) as data_pipeline_file:
+            with utils.silence():
+                pipeline = pipeline_module.Pipeline.from_yaml(data_pipeline_file, resolver=Resolver())
+
+        with open(runtime.DEFAULT_SCORING_PIPELINE_PATH) as f:
+            scoring_pipeline = pipeline_module.Pipeline.from_yaml(f)
+
+        iris_problem, iris_dataset = self.get_data(dataset_name='iris_dataset_1', problem_name='iris_problem_1')
+        inputs = [iris_dataset]
+        data_params = {
+            'number_of_folds': '2',
+            'stratified': 'false',
+            'shuffle': 'true',
+        }
+
+        save_path = os.path.join(self.test_dir, 'iris_dataset_1')
+        runtime.prepare_data_and_save(
+            save_dir=save_path, data_pipeline=data_pipeline, problem_description=iris_problem, inputs=inputs,
+            data_params=data_params, context=metadata_base.Context.TESTING, runtime_environment=self.runtime_enviroment,
+        )
+
+        all_scores, all_results = runtime.evaluate_with_prepared_data(
+            pipeline=pipeline, inputs_dir=save_path, scoring_pipeline=scoring_pipeline, problem_description=iris_problem,
+            metrics=[{'metric': problem.PerformanceMetric.ACCURACY}, {'metric': problem.PerformanceMetric.F1_MACRO}],
+            context=metadata_base.Context.TESTING, runtime_environment=self.runtime_enviroment,
+        )
+
+        all_results.check_success()
+        self.assertEqual(len(all_scores), 2)
+        self.assertEqual(list(all_scores[0].columns), ['metric', 'value', 'normalized', 'randomSeed'])
+
+        self._check_pipelines_valid_and_succeeded(all_results.pipeline_runs)
+
+    def test_compare_evaluate_with_prepared_data_with_direct_execution(self):
+        with open(
+            os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'data-preparation-train-test-split.yml'),
+            'r',
+        ) as data_pipeline_file:
+            data_pipeline = pipeline_module.Pipeline.from_yaml(data_pipeline_file, resolver=Resolver())
+
+        with open(
+            os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'random-forest-classifier.yml'),
+            'r',
+        ) as data_pipeline_file:
+            with utils.silence():
+                pipeline = pipeline_module.Pipeline.from_yaml(data_pipeline_file, resolver=Resolver())
+
+        with open(runtime.DEFAULT_SCORING_PIPELINE_PATH) as f:
+            scoring_pipeline = pipeline_module.Pipeline.from_yaml(f)
+
+        iris_problem, iris_dataset = self.get_data(dataset_name='iris_dataset_1', problem_name='iris_problem_1')
+        inputs = [iris_dataset]
+        data_params = {
+            'shuffle': 'true',
+        }
+
+        evaluate_scores, all_results = runtime.evaluate(
+            pipeline=pipeline, inputs=inputs, data_pipeline=data_pipeline, scoring_pipeline=scoring_pipeline, problem_description=iris_problem,
+            data_params=data_params,
+            metrics=[{'metric': problem.PerformanceMetric.ACCURACY}, {'metric': problem.PerformanceMetric.F1_MACRO}],
+            context=metadata_base.Context.TESTING, runtime_environment=self.runtime_enviroment,
+        )
+        all_results.check_success()
+        self.assertEqual(len(evaluate_scores), 1)
+
+        evaluate_pipeline_runs = all_results.pipeline_runs
+        self._check_pipelines_valid_and_succeeded(evaluate_pipeline_runs)
+        self.assertEqual(len(evaluate_pipeline_runs), 2)
+        self.assertTrue(evaluate_pipeline_runs[0].run.get('data_preparation', None))
+        self.assertTrue(evaluate_pipeline_runs[1].run.get('data_preparation', None))
+
+        save_path = os.path.join(self.test_dir, 'iris_dataset_1_evaluate')
+        runtime.prepare_data_and_save(
+            save_dir=save_path, data_pipeline=data_pipeline, problem_description=iris_problem, inputs=inputs,
+            data_params=data_params, context=metadata_base.Context.TESTING, runtime_environment=self.runtime_enviroment,
+        )
+
+        evaluate_with_prepared_data_scores, all_results = runtime.evaluate_with_prepared_data(
+            pipeline=pipeline, inputs_dir=save_path, scoring_pipeline=scoring_pipeline, problem_description=iris_problem,
+            metrics=[{'metric': problem.PerformanceMetric.ACCURACY}, {'metric': problem.PerformanceMetric.F1_MACRO}],
+            context=metadata_base.Context.TESTING, runtime_environment=self.runtime_enviroment,
+        )
+        all_results.check_success()
+        self.assertEqual(len(evaluate_with_prepared_data_scores), 1)
+
+        evaluate_with_prepared_data_pipeline_runs = all_results.pipeline_runs
+        self._check_pipelines_valid_and_succeeded(evaluate_with_prepared_data_pipeline_runs)
+        self.assertEqual(len(evaluate_with_prepared_data_pipeline_runs), 2)
+
+        self.assertEqual(evaluate_scores[0].values.tolist(), evaluate_with_prepared_data_scores[0].values.tolist())
+        self.assertTrue(evaluate_with_prepared_data_pipeline_runs[0].run.get('data_preparation', None))
+        self.assertTrue(evaluate_with_prepared_data_pipeline_runs[1].run.get('data_preparation', None))
+
+        self.assertEqual(evaluate_with_prepared_data_pipeline_runs[0].datasets, evaluate_pipeline_runs[0].datasets)
+        self.assertEqual(evaluate_with_prepared_data_pipeline_runs[1].datasets, evaluate_pipeline_runs[1].datasets)
+
+        for pipeline_run1, pipeline_run2 in zip(evaluate_with_prepared_data_pipeline_runs, evaluate_pipeline_runs):
+            self.assertTrue(pipeline_run_module.PipelineRun.json_structure_equals(pipeline_run1.to_json_structure(), pipeline_run2.to_json_structure()))
 
     def test_multi_input_fit(self):
         with open(
@@ -1176,7 +1375,7 @@ class TestRuntime(unittest.TestCase):
         volumes_dir: str = None
         r = runtime.Runtime(pipeline, context=metadata_base.Context.TESTING, environment=self.runtime_enviroment,
                             hyperparams=hyperparams, random_seed=random_seed, volumes_dir=volumes_dir)
-        r.fit(inputs=inputs)
+        r.fit(inputs=inputs).check_success()
 
     def test_multi_input_fit_with_one_dataset_associated(self):
         with open(
@@ -1193,7 +1392,7 @@ class TestRuntime(unittest.TestCase):
         r = runtime.Runtime(pipeline, context=metadata_base.Context.TESTING, environment=self.runtime_enviroment,
                             hyperparams=hyperparams, random_seed=random_seed, volumes_dir=volumes_dir,
                             problem_description=boston_problem)
-        r.fit(inputs=inputs)
+        r.fit(inputs=inputs).check_success()
 
     def test_produce(self):
         pipeline = self._build_pipeline(
@@ -1221,6 +1420,273 @@ class TestRuntime(unittest.TestCase):
         predictions, produce_result = runtime.produce(fitted_pipeline, inputs)
         self._validate_pipeline_run_structure(produce_result.pipeline_run.to_json_structure())
 
+    def test_expose_outputs_fit(self):
+        pipeline = self._build_pipeline(
+            '5ce0a679-e058-41a0-a8c0-8999b073466e',
+            sequence=[
+                {
+                    'primitive_class': DatasetToDataFramePrimitive
+                },
+                {
+                    'primitive_class': ColumnParserPrimitive
+                },
+                {
+                    'primitive_class': ExtractColumnsBySemanticTypesPrimitive,
+                    'INPUTS': [('inputs', 1)],
+                    'HYPERPARAMS': {
+                        'semantic_types': {
+                            'TYPE': metadata_base.ArgumentType.VALUE,
+                            'DATA': ['https://metadata.datadrivendiscovery.org/types/Attribute']
+                        },
+                        'use_columns': {
+                            'TYPE': metadata_base.ArgumentType.VALUE,
+                            'DATA': [1, 2, 3, 4]
+                        }
+                    }
+                },
+                {
+                    'primitive_class': ExtractColumnsBySemanticTypesPrimitive,
+                    'INPUTS': [('inputs', 1)],
+                    'HYPERPARAMS': {'semantic_types': {
+                        'TYPE': metadata_base.ArgumentType.VALUE,
+                        'DATA': ['https://metadata.datadrivendiscovery.org/types/SuggestedTarget']
+                    }}
+                },
+                {
+                    'primitive_class': RandomForestClassifierPrimitive,
+                    'INPUTS': [('inputs', 2), ('outputs', 3)],
+                },
+            ],
+        )
+
+        iris_problem, iris_dataset = self.get_data()
+        inputs = [iris_dataset]
+        hyperparams = None
+        random_seed = 0
+        volumes_dir: str = None
+
+        # Case boolean True
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, expose_produced_outputs=True
+        )
+
+        self.assertEqual(
+            list(fit_result.values.keys()),
+            ['outputs.0', 'steps.0.produce', 'steps.1.produce', 'steps.2.produce', 'steps.3.produce', 'steps.4.produce']
+        )
+
+        # Case boolean False
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, expose_produced_outputs=False
+        )
+
+        self.assertEqual(list(fit_result.values.keys()), ['outputs.0'])
+
+        # Check exposing values from invalid produce methods.
+        expose_produced_outputs = ['steps.4.produce', 'steps.4.produce_feature_importances', 'steps.1.produce']
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, outputs_to_expose=expose_produced_outputs,
+        )
+
+        for expose_output in expose_produced_outputs:
+            self.assertIn(expose_output, fit_result.values)
+
+        # Check for different cases such as index value out of range, random method call and that other methods that are not produced.
+        cases_expose_produced_outputs = [
+            ['steps.5.produce'], ['steps.1.random_method'], ['steps.4.log_likelihoods'], ['test'], ['test.test'], ['test.test.test']]
+        for expose_produced_outputs in cases_expose_produced_outputs:
+            with self.assertRaises(ValueError) as cm:
+                fitted_pipeline, predictions, fit_result = runtime.fit(
+                    pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams,
+                    random_seed=random_seed, volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+                    runtime_environment=self.runtime_enviroment, outputs_to_expose=expose_produced_outputs,
+                )
+
+        # Same cases but having a subpipeline as step
+        pipeline_with_subpipeline = self._build_pipeline('3d7be7d2-458f-4d57-94ce-5f1e1619b477', [pipeline])
+
+        # Case boolean True
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline_with_subpipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, expose_produced_outputs=True
+        )
+
+        self.assertEqual(
+            list(fit_result.values.keys()),
+            ['outputs.0', 'steps.0.outputs.0', 'steps.0.produce', 'steps.0.steps.0.produce', 'steps.0.steps.1.produce',
+             'steps.0.steps.2.produce', 'steps.0.steps.3.produce', 'steps.0.steps.4.produce']
+        )
+
+        # Case boolean False
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline_with_subpipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, expose_produced_outputs=False
+        )
+
+        self.assertEqual(list(fit_result.values.keys()), ['outputs.0'])
+
+        # Check exposing values from invalid produce methods.
+        expose_produced_outputs = ['steps.0.steps.4.produce', 'steps.0.steps.4.produce_feature_importances',
+                                   'steps.0.steps.1.produce', 'steps.0.produce']
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline_with_subpipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, outputs_to_expose=expose_produced_outputs,
+        )
+
+        for expose_output in expose_produced_outputs:
+            self.assertIn(expose_output, fit_result.values)
+
+        # Check for different cases such as index value out of range, random method call and that other methods that are not produced.
+        cases_expose_produced_outputs = [
+            ['steps.5.produce'], ['steps.1.random_method'], ['steps.4.log_likelihoods'], ['test'], ['test.test'],
+            ['test.test.test'], ['steps.0.'], ['steps.0.steps.4.log_likelihoods']]
+        for expose_produced_outputs in cases_expose_produced_outputs:
+            with self.assertRaises(ValueError) as cm:
+                pipeline_with_subpipeline, predictions, fit_result = runtime.fit(
+                    pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams,
+                    random_seed=random_seed, volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+                    runtime_environment=self.runtime_enviroment, outputs_to_expose=expose_produced_outputs,
+                )
+
+        # Case for pipeline with no outputs and expossing all produce methods
+        pipeline.outputs = []
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, expose_produced_outputs=True, is_standard_pipeline=False
+        )
+
+        self.assertEqual(
+            list(fit_result.values.keys()),
+            ['steps.0.produce', 'steps.1.produce', 'steps.2.produce', 'steps.3.produce', 'steps.4.produce']
+        )
+
+        # Case for a non-standard pipeline with multiple outputs.
+        outputs_to_check = ['steps.2.produce', 'steps.3.produce', 'steps.4.produce']
+        for output in outputs_to_check:
+            pipeline.add_output(output)
+
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, expose_produced_outputs=True, is_standard_pipeline=False
+        )
+
+        self.assertEqual(
+            list(fit_result.values.keys()),
+            ['outputs.0', 'outputs.1', 'outputs.2', 'steps.0.produce', 'steps.1.produce', 'steps.2.produce',
+             'steps.3.produce', 'steps.4.produce']
+        )
+
+    def test_expose_outputs_produce(self):
+        pipeline = self._build_pipeline(
+            'c8e08a03-68b4-4ce8-8828-1a0fb422418d',
+            sequence=[
+                {
+                    'primitive_class': DatasetToDataFramePrimitive
+                },
+                {
+                    'primitive_class': ColumnParserPrimitive
+                },
+                {
+                    'primitive_class': ExtractColumnsBySemanticTypesPrimitive,
+                    'INPUTS': [('inputs', 1)],
+                    'HYPERPARAMS': {
+                        'semantic_types': {
+                            'TYPE': metadata_base.ArgumentType.VALUE,
+                            'DATA': ['https://metadata.datadrivendiscovery.org/types/Attribute']
+                        },
+                        'use_columns': {
+                            'TYPE': metadata_base.ArgumentType.VALUE,
+                            'DATA': [1, 2, 3, 4]
+                        }
+                    }
+                },
+                {
+                    'primitive_class': ExtractColumnsBySemanticTypesPrimitive,
+                    'INPUTS': [('inputs', 1)],
+                    'HYPERPARAMS': {'semantic_types': {
+                        'TYPE': metadata_base.ArgumentType.VALUE,
+                        'DATA': ['https://metadata.datadrivendiscovery.org/types/SuggestedTarget']
+                    }}
+                },
+                {
+                    'primitive_class': RandomForestClassifierPrimitive,
+                    'INPUTS': [('inputs', 2), ('outputs', 3)],
+                },
+            ],
+        )
+        iris_problem, iris_dataset = self.get_data()
+        inputs = [iris_dataset]
+        hyperparams = None
+        random_seed = 0
+        volumes_dir: str = None
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment
+        )
+
+        # Check exposing values from produce methods that are not in the pipeline.
+        expose_produced_outputs = ['steps.4.produce', 'steps.4.produce_feature_importances', 'steps.1.produce']
+        predictions, produce_result = runtime.produce(fitted_pipeline, inputs, outputs_to_expose=expose_produced_outputs)
+
+        for expose_output in expose_produced_outputs:
+            self.assertIn(expose_output, produce_result.values)
+
+        self._validate_pipeline_run_structure(produce_result.pipeline_run.to_json_structure())
+
+        # Check for different cases such as index value out of range, random method call and that other methods that are not produced.
+        cases_expose_produced_outputs = [
+            ['steps.5.produce'], ['steps.1.random_method'], ['steps.4.log_likelihoods'],
+            ['test'], ['test.test'], ['test.test.test']
+        ]
+        for expose_produced_outputs in cases_expose_produced_outputs:
+            with self.assertRaises(ValueError) as cm:
+                predictions, produce_result = runtime.produce(
+                    fitted_pipeline, inputs, outputs_to_expose=expose_produced_outputs)
+
+        # Same cases but having a subpipeline as step
+        pipeline_with_subpipeline = self._build_pipeline('3d7be7d2-458f-4d57-94ce-5f1e1619b477', [pipeline])
+
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline_with_subpipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams,
+            random_seed=random_seed, volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment
+        )
+
+        # Check exposing values from produce methods that are not in the pipeline.
+        expose_produced_outputs = ['steps.0.steps.4.produce', 'steps.0.steps.4.produce_feature_importances',
+                                   'steps.0.steps.1.produce', 'steps.0.produce']
+        predictions, produce_result = runtime.produce(
+            fitted_pipeline, inputs,
+            outputs_to_expose=expose_produced_outputs,
+        )
+
+        for expose_output in expose_produced_outputs:
+            self.assertIn(expose_output, produce_result.values)
+
+        self._validate_pipeline_run_structure(produce_result.pipeline_run.to_json_structure())
+
+        # Check for different cases such as index value out of range, random method call and that other methods that are not produced.
+        cases_expose_produced_outputs = [
+            ['steps.5.produce'], ['steps.1.random_method'], ['steps.4.log_likelihoods'], ['test'], ['test.test'],
+            ['test.test.test'], ['steps.0.'], ['steps.0.steps.4.log_likelihoods']]
+
+        for expose_produced_outputs in cases_expose_produced_outputs:
+            with self.assertRaises(ValueError) as cm:
+                predictions, produce_result = runtime.produce(
+                    fitted_pipeline, inputs, outputs_to_expose=expose_produced_outputs)
+
     def test_multi_input_produce(self):
         with open(
                 os.path.join(os.path.dirname(__file__), 'data', 'pipelines', 'multi-input-test.json'), 'r'
@@ -1236,8 +1702,8 @@ class TestRuntime(unittest.TestCase):
         r = runtime.Runtime(pipeline, context=metadata_base.Context.TESTING, environment=self.runtime_enviroment,
                             hyperparams=hyperparams, random_seed=random_seed, volumes_dir=volumes_dir,
                             problem_description=iris_problem)
-        r.fit(inputs=inputs)
-        r.produce(inputs=inputs)
+        r.fit(inputs=inputs).check_success()
+        r.produce(inputs=inputs).check_success()
 
     def test_multi_input_produce_without_problem(self):
         with open(
@@ -1253,8 +1719,8 @@ class TestRuntime(unittest.TestCase):
         volumes_dir: str = None
         r = runtime.Runtime(pipeline, context=metadata_base.Context.TESTING, environment=self.runtime_enviroment,
                             hyperparams=hyperparams, random_seed=random_seed, volumes_dir=volumes_dir)
-        r.fit(inputs=inputs)
-        r.produce(inputs=inputs)
+        r.fit(inputs=inputs).check_success()
+        r.produce(inputs=inputs).check_success()
 
     def test_multi_input_produce_with_one_dataset_associated(self):
         with open(
@@ -1271,8 +1737,8 @@ class TestRuntime(unittest.TestCase):
         r = runtime.Runtime(pipeline, context=metadata_base.Context.TESTING, environment=self.runtime_enviroment,
                             hyperparams=hyperparams, random_seed=random_seed, volumes_dir=volumes_dir,
                             problem_description=boston_problem)
-        r.fit(inputs=inputs)
-        r.produce(inputs=inputs)
+        r.fit(inputs=inputs).check_success()
+        r.produce(inputs=inputs).check_success()
 
     @staticmethod
     def _build_fail_runtime(method_name, message):
@@ -1414,11 +1880,24 @@ class TestRuntime(unittest.TestCase):
 
         self.assertEqual(dataset['learningData'].shape, (150, 6))
 
-        r = runtime.Runtime(pipeline, context=metadata_base.Context.TESTING, is_standard_pipeline=False, environment=self.runtime_enviroment)
+        hyperparams = dict(pipeline.steps[1].primitive.metadata.get_hyperparams().defaults())
+        del hyperparams['primitive']
+
+        r = runtime.Runtime(
+            pipeline,
+            # We explicitly pass default hyper-parameters to test this code path as well.
+            [
+                {},
+                hyperparams,
+            ],
+            context=metadata_base.Context.TESTING,
+            is_standard_pipeline=False,
+            environment=self.runtime_enviroment,
+        )
 
         inputs = [dataset]
 
-        result = r.fit(inputs, return_values=['outputs.0'])
+        result = r.fit(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertTrue(result.pipeline_run)
@@ -1429,7 +1908,7 @@ class TestRuntime(unittest.TestCase):
 
         self.assertEqual(output_dataset['learningData'].shape, (150, 5))
 
-        result = r.produce(inputs, return_values=['outputs.0'])
+        result = r.produce(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -1442,7 +1921,7 @@ class TestRuntime(unittest.TestCase):
         pickled = pickle.dumps(r)
         restored = pickle.loads(pickled)
 
-        result = restored.produce(inputs, return_values=['outputs.0'])
+        result = restored.produce(inputs, outputs_to_expose=['outputs.0'])
         result.check_success()
 
         self.assertEqual(len(result.values), 1)
@@ -1463,7 +1942,7 @@ class TestRuntime(unittest.TestCase):
         step_0 = pipeline_module.PrimitiveStep(
             primitive=index.get_primitive('d3m.primitives.data_transformation.dataset_to_dataframe.Common'),
         )
-        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='inputs.0')
+        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.0')
         step_0.add_output('produce')
         pipeline_description.add_step(step_0)
 
@@ -1471,7 +1950,7 @@ class TestRuntime(unittest.TestCase):
         step_1 = pipeline_module.PrimitiveStep(
             primitive=index.get_primitive('d3m.primitives.schema_discovery.profiler.Common'),
         )
-        step_1.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='steps.0.produce')
+        step_1.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.0.produce')
         step_1.add_output('produce')
         pipeline_description.add_step(step_1)
 
@@ -1479,7 +1958,7 @@ class TestRuntime(unittest.TestCase):
         step_2 = pipeline_module.PrimitiveStep(
             primitive=index.get_primitive('d3m.primitives.data_transformation.column_parser.Common'),
         )
-        step_2.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='steps.1.produce')
+        step_2.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.1.produce')
         step_2.add_output('produce')
         pipeline_description.add_step(step_2)
 
@@ -1487,8 +1966,8 @@ class TestRuntime(unittest.TestCase):
         step_3 = pipeline_module.PrimitiveStep(
             primitive=index.get_primitive('d3m.primitives.classification.random_forest.Common'),
         )
-        step_3.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='steps.2.produce')
-        step_3.add_argument(name='outputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='steps.2.produce')
+        step_3.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.2.produce')
+        step_3.add_argument(name='outputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.2.produce')
         step_3.add_hyperparameter(name='return_result', argument_type=metadata_base.ArgumentType.VALUE, data='replace')
         step_3.add_output('produce')
         pipeline_description.add_step(step_3)
@@ -1497,8 +1976,8 @@ class TestRuntime(unittest.TestCase):
         step_4 = pipeline_module.PrimitiveStep(
             primitive=index.get_primitive('d3m.primitives.data_transformation.construct_predictions.Common'),
         )
-        step_4.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='steps.3.produce')
-        step_4.add_argument(name='reference', argument_type=metadata_base.ArgumentType.CONTAINER, data_reference='steps.2.produce')
+        step_4.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.3.produce')
+        step_4.add_argument(name='reference', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.2.produce')
         step_4.add_output('produce')
         pipeline_description.add_step(step_4)
 
@@ -1513,7 +1992,7 @@ class TestRuntime(unittest.TestCase):
 
         with utils.silence():
             r = runtime.Runtime(pipeline=pipeline_description, context=metadata_base.Context.TESTING)
-            r.fit(inputs=[ds])
+            r.fit(inputs=[ds]).check_success()
             result = r.produce(inputs=[ds])
 
         result.check_success()
@@ -1528,6 +2007,336 @@ class TestRuntime(unittest.TestCase):
             (metadata_base.ALL_ELEMENTS, 1),
             'https://metadata.datadrivendiscovery.org/types/TrueTarget'),
         )
+
+
+    def test_problem_pipeline_openml(self):
+        # Creating pipeline
+        pipeline_description = pipeline_module.Pipeline()
+        pipeline_description.add_input(name='inputs')
+
+        # Step 0: dataset_to_dataframe
+        step_0 = pipeline_module.PrimitiveStep(
+            primitive=index.get_primitive('d3m.primitives.data_transformation.dataset_to_dataframe.Common'),
+        )
+        step_0.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='inputs.0')
+        step_0.add_output('produce')
+        pipeline_description.add_step(step_0)
+
+        # Step 1: profiler
+        step_1 = pipeline_module.PrimitiveStep(
+            primitive=index.get_primitive('d3m.primitives.schema_discovery.profiler.Common'),
+        )
+        step_1.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.0.produce')
+        step_1.add_output('produce')
+        pipeline_description.add_step(step_1)
+
+        # Step 2: column_parser
+        step_2 = pipeline_module.PrimitiveStep(
+            primitive=index.get_primitive('d3m.primitives.data_transformation.column_parser.Common'),
+        )
+        step_2.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.1.produce')
+        step_2.add_output('produce')
+        pipeline_description.add_step(step_2)
+
+        # Step 4: random_forest
+        step_3 = pipeline_module.PrimitiveStep(
+            primitive=index.get_primitive('d3m.primitives.classification.random_forest.Common'),
+        )
+        step_3.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.2.produce')
+        step_3.add_argument(name='outputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.2.produce')
+        step_3.add_hyperparameter(name='return_result', argument_type=metadata_base.ArgumentType.VALUE, data='replace')
+        step_3.add_output('produce')
+        pipeline_description.add_step(step_3)
+
+        # Step 5: construct predictions
+        step_4 = pipeline_module.PrimitiveStep(
+            primitive=index.get_primitive('d3m.primitives.data_transformation.construct_predictions.Common'),
+        )
+        step_4.add_argument(name='inputs', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.3.produce')
+        step_4.add_argument(name='reference', argument_type=metadata_base.ArgumentType.CONTAINER, data='steps.2.produce')
+        step_4.add_output('produce')
+        pipeline_description.add_step(step_4)
+
+        # Final Output
+        pipeline_description.add_output(name='output predictions', data_reference='steps.4.produce')
+
+        # Load problem and dataset
+        task_id = 59
+        openml_problem_uri = 'https://www.openml.org/t/{task_id}'.format(task_id=task_id)
+        problem_description = problem.Problem.load(openml_problem_uri)
+
+        # We get the dataset id from the problem
+        dataset_id = int(problem_description['inputs'][0]['dataset_id'].split('_')[-1])
+        openml_dataset_uri = 'https://www.openml.org/d/{dataset_id}'.format(dataset_id=dataset_id)
+        ds = container.Dataset.load(openml_dataset_uri)
+
+        with utils.silence():
+            r = runtime.Runtime(pipeline=pipeline_description, problem_description=problem_description,
+                                context=metadata_base.Context.TESTING)
+            r.fit(inputs=[ds]).check_success()
+            result = r.produce(inputs=[ds])
+
+        result.check_success()
+        predictions = result.values['outputs.0']
+
+        self.assertEqual(predictions.shape, (150, 2))
+        self.assertTrue(predictions.metadata.has_semantic_type(
+            (metadata_base.ALL_ELEMENTS, 1),
+            'https://metadata.datadrivendiscovery.org/types/PredictedTarget'),
+        )
+        self.assertFalse(predictions.metadata.has_semantic_type(
+            (metadata_base.ALL_ELEMENTS, 1),
+            'https://metadata.datadrivendiscovery.org/types/TrueTarget'),
+        )
+
+    def test_sort_pipeline_runs(self):
+        self.assertEqual(runtime._sort_pipeline_runs([
+            {
+                'id': 'foo1',
+            },
+            {
+                'id': 'foo2',
+                'previous_pipeline_run': {
+                    'id': 'foo1',
+                },
+            },
+            {
+                'id': 'foo3'
+            }
+        ]), [
+            [{'id': 'foo1'}, {'id': 'foo2', 'previous_pipeline_run': {'id': 'foo1'}}],
+            [{'id': 'foo3'}],
+        ])
+
+        with self.assertRaisesRegex(exceptions.InvalidArgumentValueError, 'No first pipeline run'):
+            runtime._sort_pipeline_runs([
+                {
+                    'id': 'foo2',
+                    'previous_pipeline_run': {
+                        'id': 'foo1',
+                    },
+                },
+            ])
+
+        with self.assertRaisesRegex(exceptions.InvalidArgumentValueError, "Pipeline runs with previous pipeline runs which were not provided: \['foo2'\]"):
+            runtime._sort_pipeline_runs([
+                {
+                    'id': 'foo1',
+                },
+                {
+                    'id': 'foo2',
+                    'previous_pipeline_run': {
+                        'id': 'foo4',
+                    },
+                },
+                {
+                    'id': 'foo3'
+                }
+            ])
+
+        with self.assertRaisesRegex(exceptions.InvalidArgumentValueError, "Pipeline runs with previous pipeline runs which were not provided: \['foo1', 'foo2', 'foo3'\]"):
+            runtime._sort_pipeline_runs([
+                {
+                    'id': 'foo0',
+                },
+                {
+                    'id': 'foo1',
+                    'previous_pipeline_run': {
+                        'id': 'foo2',
+                    },
+                },
+                {
+                    'id': 'foo2',
+                    'previous_pipeline_run': {
+                        'id': 'foo3',
+                    },
+                },
+                {
+                    'id': 'foo3',
+                    'previous_pipeline_run': {
+                        'id': 'foo1',
+                    },
+                }
+            ])
+
+    def test_extra_argument_in_extra_produce(self):
+        pipeline = pipeline_module.Pipeline.from_json("""
+            {
+              "id": "90e99f5b-fdec-4840-b5c3-dcdbd22eaa5e",
+              "schema": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
+              "created": "2020-02-28T09:42:27.443844Z",
+              "name": "Test pipeline",
+              "description": "Just a test pipeline",
+              "inputs": [
+                {}
+              ],
+              "outputs": [
+                {
+                  "data": "steps.0.produce"
+                }
+              ],
+              "steps": [
+                {
+                  "type": "PRIMITIVE",
+                  "primitive": {
+                    "id": "13d2174a-5502-4eeb-84b2-a12f0e7e8b6e",
+                    "version": "0.1.0",
+                    "python_path": "d3m.primitives.test.ExtraArgumentPrimitive",
+                    "name": "Extra Argument Primitive"
+                  },
+                  "arguments": {
+                    "inputs": {
+                      "type": "CONTAINER",
+                      "data": "inputs.0"
+                    }
+                  },
+                  "outputs": [
+                    {
+                      "id": "produce"
+                    }
+                  ]
+                }
+              ]
+            }
+        """, resolver=Resolver())
+
+        iris_problem, iris_dataset = self.get_data()
+        inputs = [iris_dataset]
+        hyperparams = None
+        random_seed = 0
+        volumes_dir: str = None
+
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, is_standard_pipeline=False,
+        )
+        fit_result.check_success()
+
+        with self.assertLogs(logger=runtime.logger) as cm:
+            fitted_pipeline, predictions, fit_result = runtime.fit(
+                pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+                volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+                runtime_environment=self.runtime_enviroment, is_standard_pipeline=False, outputs_to_expose=['steps.0.produce_another'],
+            )
+            fit_result.check_success()
+
+        self.assertEqual(len(cm.records), 1)
+        self.assertEqual(cm.records[0].message, "Additional output to expose 'produce_another' does not have all necessary arguments available. Skipping exposing. Missing arguments: ['extra_data']")
+
+        pipeline = pipeline_module.Pipeline.from_json("""
+            {
+              "id": "90e99f5b-fdec-4840-b5c3-dcdbd22eaa5e",
+              "schema": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
+              "created": "2020-02-28T09:42:27.443844Z",
+              "name": "Test pipeline",
+              "description": "Just a test pipeline",
+              "inputs": [
+                {}
+              ],
+              "outputs": [
+                {
+                  "data": "steps.0.produce"
+                }
+              ],
+              "steps": [
+                {
+                  "type": "PRIMITIVE",
+                  "primitive": {
+                    "id": "13d2174a-5502-4eeb-84b2-a12f0e7e8b6e",
+                    "version": "0.1.0",
+                    "python_path": "d3m.primitives.test.ExtraArgumentPrimitive",
+                    "name": "Extra Argument Primitive"
+                  },
+                  "arguments": {
+                    "inputs": {
+                      "type": "CONTAINER",
+                      "data": "inputs.0"
+                    },
+                    "extra_data": {
+                      "type": "CONTAINER",
+                      "data": "inputs.0"
+                    }
+                  },
+                  "outputs": [
+                    {
+                      "id": "produce"
+                    }
+                  ]
+                }
+              ]
+            }
+        """, resolver=Resolver())
+
+        fitted_pipeline, predictions, fit_result = runtime.fit(
+            pipeline, inputs, problem_description=iris_problem, hyperparams=hyperparams, random_seed=random_seed,
+            volumes_dir=volumes_dir, context=metadata_base.Context.TESTING,
+            runtime_environment=self.runtime_enviroment, is_standard_pipeline=False, outputs_to_expose=['steps.0.produce_another'],
+        )
+        fit_result.check_success()
+
+    def _run_pipeline_with_static_primitive_input(self, pipeline):
+        pipeline.check(allow_placeholders=False, standard_pipeline=False, input_types={})
+
+        r = runtime.Runtime(
+            pipeline,
+            context=metadata_base.Context.TESTING,
+            is_standard_pipeline=False,
+            environment=self.runtime_enviroment,
+        )
+
+        result = r.fit([], outputs_to_expose=['outputs.0'])
+        result.check_success()
+
+        self.assertTrue(result.pipeline_run)
+
+        self.assertEqual(len(result.values), 1)
+
+        outputs = result.values['outputs.0']
+
+        self.assertTrue(numpy.allclose(outputs.values, container.ndarray([1.76405235, 0.40015721, 0.97873798, 2.2408932]).reshape((4, 1))))
+
+    def test_static_primitive_input(self):
+        pipeline = pipeline_module.Pipeline()
+
+        input_numbers = list(range(4))
+        inputs = container.List(input_numbers, generate_metadata=True)
+
+        step = pipeline_module.PrimitiveStep(
+            {
+                'id': 'df3153a1-4411-47e2-bbc0-9d5e9925ad79',
+                'version': '0.1.0',
+                'name': "Random Samples",
+                'python_path': 'd3m.primitives.data_generation.random.Test',
+            },
+            resolver=pipeline_module.Resolver(),
+        )
+        step.add_argument('inputs', metadata_base.ArgumentType.VALUE, inputs)
+        step.add_output('produce')
+
+        pipeline.add_step(step)
+
+        pipeline.add_output('steps.0.produce')
+
+        self._run_pipeline_with_static_primitive_input(pipeline)
+
+        # This should pickle the list because it is container.List.
+        pipeline_json = pipeline.to_json()
+
+        # This should unpickle the list.
+        pipeline = pipeline_module.Pipeline.from_json(pipeline_json)
+
+        self._run_pipeline_with_static_primitive_input(pipeline)
+
+        # Let's make a simpler pipeline without container.List. This is supported to make it easier to write those by hand.
+        pipeline_structure = json.loads(pipeline_json)
+        pipeline_structure['steps'][0]['arguments']['inputs']['data'] = input_numbers
+        del pipeline_structure['digest']
+        pipeline_json = json.dumps(pipeline_structure)
+
+        pipeline = pipeline_module.Pipeline.from_json(pipeline_json)
+
+        self._run_pipeline_with_static_primitive_input(pipeline)
 
 
 if __name__ == '__main__':

@@ -1,5 +1,9 @@
 import unittest
 
+import numpy
+import logging 
+import json
+
 from d3m import container, utils as d3m_utils
 from d3m.base import utils
 from d3m.metadata import base as metadata_base
@@ -9,7 +13,7 @@ class TestBaseUtils(unittest.TestCase):
     def test_combine_columns_compact_metadata(self):
         main = container.DataFrame({'a1': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9], 'd1': [10, 11, 12], 'e1': [13, 14, 15]}, {
             'top_level': 'main',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
         main.metadata = main.metadata.generate(main, compact=True)
         main.metadata = main.metadata.update_column(0, {'name': 'aaa111'})
         main.metadata = main.metadata.update_column(1, {'name': 'bbb111', 'extra': 'b_column'})
@@ -291,26 +295,22 @@ class TestBaseUtils(unittest.TestCase):
         }, {
             'selector': ['__ALL_ELEMENTS__', 0],
             'metadata': {
-                'name': 'aaa222',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 1],
             'metadata': {
-                'name': 'bbb222',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 2],
             'metadata': {
-                'name': 'aaa333',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa333'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 3],
             'metadata': {
-                'name': 'bbb333',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb333'
             },
         }])
 
@@ -434,8 +434,7 @@ class TestBaseUtils(unittest.TestCase):
         }, {
             'selector': ['__ALL_ELEMENTS__', 0],
             'metadata': {
-                'name': 'aaa222',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 1],
@@ -446,8 +445,7 @@ class TestBaseUtils(unittest.TestCase):
         }, {
             'selector': ['__ALL_ELEMENTS__', 2],
             'metadata': {
-                'name': 'bbb222',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 3],
@@ -457,20 +455,19 @@ class TestBaseUtils(unittest.TestCase):
         }, {
             'selector': ['__ALL_ELEMENTS__', 4],
             'metadata': {
-                'name': 'aaa333',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa333'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 5],
             'metadata': {
-                'name': 'bbb333',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb333'
             },
         }])
+
     def test_combine_columns_noncompact_metadata(self):
         main = container.DataFrame({'a1': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9], 'd1': [10, 11, 12], 'e1': [13, 14, 15]}, {
             'top_level': 'main',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
         main.metadata = main.metadata.generate(main, compact=False)
         main.metadata = main.metadata.update_column(0, {'name': 'aaa111'})
         main.metadata = main.metadata.update_column(1, {'name': 'bbb111', 'extra': 'b_column'})
@@ -738,28 +735,32 @@ class TestBaseUtils(unittest.TestCase):
                 },
             },
         }, {
+          "metadata": {
+            "structural_type": "numpy.int64"
+          },
+          "selector": [
+            "__ALL_ELEMENTS__",
+            "__ALL_ELEMENTS__"
+          ]
+        }, {
             'selector': ['__ALL_ELEMENTS__', 0],
             'metadata': {
-                'name': 'aaa222',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 1],
             'metadata': {
-                'name': 'bbb222',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 2],
             'metadata': {
-                'name': 'aaa333',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa333'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 3],
             'metadata': {
-                'name': 'bbb333',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb333'
             },
         }])
 
@@ -875,41 +876,43 @@ class TestBaseUtils(unittest.TestCase):
                 },
             },
         }, {
+             "metadata": {
+                 "structural_type": "numpy.int64"
+             },
+             "selector": [
+                 "__ALL_ELEMENTS__",
+                 "__ALL_ELEMENTS__"
+             ]
+        }, {
             'selector': ['__ALL_ELEMENTS__', 0],
             'metadata': {
-                'name': 'aaa222',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 1],
             'metadata': {
                 'name': 'bbb111',
-                'extra': 'b_column',
-                'structural_type': 'numpy.int64',
+                'extra': 'b_column'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 2],
             'metadata': {
-                'name': 'bbb222',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb222'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 3],
             'metadata': {
-                'name': 'd1',
-                'structural_type': 'numpy.int64',
+                'name': 'd1'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 4],
             'metadata': {
-                'name': 'aaa333',
-                'structural_type': 'numpy.int64',
+                'name': 'aaa333'
             },
         }, {
             'selector': ['__ALL_ELEMENTS__', 5],
             'metadata': {
-                'name': 'bbb333',
-                'structural_type': 'numpy.int64',
+                'name': 'bbb333'
             },
         }])
 
@@ -974,7 +977,7 @@ class TestBaseUtils(unittest.TestCase):
         }])
 
     def test_combine_columns_new_with_index_noncompact_metadata(self):
-        main = container.DataFrame({'d3mIndex': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9]}, columns=['d3mIndex', 'b1', 'c1'], generate_metadata=False)
+        main = container.DataFrame({'d3mIndex': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9]}, columns=['d3mIndex', 'b1', 'c1'], dtype=numpy.int64, generate_metadata=False)
         main.metadata = main.metadata.generate(main, compact=False)
         main.metadata = main.metadata.update_column(0, {'name': 'd3mIndex', 'semantic_types': ['http://schema.org/Integer', 'https://metadata.datadrivendiscovery.org/types/PrimaryKey']})
         main.metadata = main.metadata.update_column(1, {'name': 'b1', 'semantic_types': ['https://metadata.datadrivendiscovery.org/types/Attribute']})

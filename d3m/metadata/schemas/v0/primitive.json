@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/primitive.json",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/primitive.json",
   "title": "Primitive metadata",
   "description": "Schema for metadata for primitives.",
   "type": "object",

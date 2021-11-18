@@ -1,16 +1,10 @@
 import datetime
 import typing
 
-import numpy  # type: ignore
+import numpy
 
 from d3m import deprecate
 from d3m.metadata import base as metadata_base
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = ('ndarray',)
 
@@ -32,6 +26,10 @@ class ndarray(numpy.ndarray):
     metadata:
         Optional initial metadata for the top-level of the array, or top-level metadata to be updated
         if ``input_array`` is another instance of this array class.
+    dtype:
+        Any object that can be interpreted as a numpy data type.
+    order:
+        Row-major (C-style) or column-major (Fortran-style) order.
     generate_metadata:
         Automatically generate and update the metadata.
     check:
@@ -40,19 +38,18 @@ class ndarray(numpy.ndarray):
         DEPRECATED: argument ignored.
     timestamp:
         DEPRECATED: argument ignored.
-
-    Attributes
-    ----------
-    metadata:
-        Metadata associated with the array.
     """
 
+    #: Metadata associated with the array.
     metadata: metadata_base.DataMetadata
 
     @deprecate.arguments('source', 'timestamp', 'check', message="argument ignored")
-    def __new__(cls: typing.Type[N], input_array: typing.Sequence, metadata: typing.Dict[str, typing.Any] = None, *,
-                generate_metadata: bool = False, check: bool = True, source: typing.Any = None, timestamp: datetime.datetime = None) -> N:
-        array = numpy.asarray(input_array).view(cls)
+    def __new__(
+        cls: typing.Type[N], input_array: typing.Sequence, metadata: typing.Dict[str, typing.Any] = None, *,
+        dtype: typing.Union[numpy.dtype, str] = None, order: typing.Any = None, generate_metadata: bool = False,
+        check: bool = True, source: typing.Any = None, timestamp: datetime.datetime = None,
+    ) -> N:
+        array = numpy.asarray(input_array, dtype=dtype, order=order).view(cls)
 
         # Importing here to prevent import cycle.
         from d3m import types
@@ -60,7 +57,7 @@ class ndarray(numpy.ndarray):
         if isinstance(input_array, types.Container):
             if isinstance(input_array, ndarray):
                 # We made a copy, so we do not have to generate metadata.
-                array.metadata = input_array.metadata  # type: ignore
+                array.metadata = input_array.metadata
             else:
                 array.metadata = input_array.metadata
                 if generate_metadata:
@@ -103,6 +100,10 @@ class ndarray(numpy.ndarray):
 
 
 def ndarray_serializer(obj: ndarray) -> dict:
+    """
+    Serializer to be used with PyArrow.
+    """
+
     data = {
         'metadata': obj.metadata,
         'numpy': obj.view(numpy.ndarray),
@@ -115,14 +116,10 @@ def ndarray_serializer(obj: ndarray) -> dict:
 
 
 def ndarray_deserializer(data: dict) -> ndarray:
+    """
+    Deserializer to be used with PyArrow.
+    """
+
     array = data['numpy'].view(data.get('type', ndarray))
     array.metadata = data['metadata']
     return array
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        ndarray, 'd3m.ndarray',
-        custom_serializer=ndarray_serializer,
-        custom_deserializer=ndarray_deserializer,
-    )

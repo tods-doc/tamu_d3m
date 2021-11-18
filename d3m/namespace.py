@@ -106,14 +106,14 @@ class ModuleType(types.ModuleType):
                 try:
                     logger.debug("Loading entry point '%(entry_point_name)s'.", {'entry_point_name': entry_point.name})
                     entry_point.require()
-                    primitive = entry_point.resolve()  # type: ignore
+                    primitive = entry_point.resolve()
                 except pkg_resources.ResolutionError as error:
                     logger.warning("While loading primitive '%(entry_point_name)s', an error has been detected: %(error)s", {'entry_point_name': entry_point.name, 'error': error})
                     logger.warning("Attempting to load primitive '%(entry_point_name)s' without checking requirements.", {'entry_point_name': entry_point.name})
 
                 # There was an error, so we try again without checking requirements.
                 if primitive is None:
-                    primitive = entry_point.resolve()  # type: ignore
+                    primitive = entry_point.resolve()
 
                 try:
                     # We set the sentinel so that when during registration attribute with name "name"

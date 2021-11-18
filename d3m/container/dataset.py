@@ -12,6 +12,7 @@ import logging
 import math
 import os
 import os.path
+import pathlib
 import pprint
 import re
 import shutil
@@ -21,23 +22,17 @@ import traceback
 import typing
 from urllib import error as urllib_error, parse as url_parse
 
-import dateutil.parser  # type: ignore
-import frozendict  # type: ignore
-import numpy  # type: ignore
-import openml  # type: ignore
-import pandas  # type: ignore
-from pandas.io import common as pandas_io_common  # type: ignore
-from sklearn import datasets  # type: ignore
+import dateutil.parser
+import frozendict
+import numpy
+import openml
+import pandas
+from pandas.io import common as pandas_io_common
+from sklearn import datasets
 
 from . import pandas as container_pandas
 from d3m import deprecate, exceptions, utils
 from d3m.metadata import base as metadata_base
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = ('Dataset', 'ComputeDigest')
 
@@ -48,7 +43,7 @@ UNITS = {
     'KiB': 2*10, 'MiB': 2*20, 'GiB': 2*30, 'TiB': 2*40, 'PiB': 2*50,
 }
 SIZE_TO_UNITS = {
-    1: 'B', 3: 'KB', 6: 'MB',
+    0: 'B', 3: 'KB', 6: 'MB',
     9: 'GB', 12: 'TB', 15: 'PB',
 }
 
@@ -63,6 +58,7 @@ D3M_ROLE_CONSTANTS_TO_SEMANTIC_TYPES = {
     'boundaryIndicator': 'https://metadata.datadrivendiscovery.org/types/Boundary',
     'interval': 'https://metadata.datadrivendiscovery.org/types/Interval',
     'instanceWeight': 'https://metadata.datadrivendiscovery.org/types/InstanceWeight',
+    'locationPolygon': 'https://metadata.datadrivendiscovery.org/types/LocationPolygon',
     'boundingPolygon': 'https://metadata.datadrivendiscovery.org/types/BoundingPolygon',
     'suggestedPrivilegedData': 'https://metadata.datadrivendiscovery.org/types/SuggestedPrivilegedData',
     'suggestedGroupingKey': 'https://metadata.datadrivendiscovery.org/types/SuggestedGroupingKey',
@@ -76,6 +72,8 @@ D3M_ROLE_CONSTANTS_TO_SEMANTIC_TYPES = {
     'undirectedEdgeTarget': 'https://metadata.datadrivendiscovery.org/types/UndirectedEdgeTarget',
     'simpleEdgeTarget': 'https://metadata.datadrivendiscovery.org/types/SimpleEdgeTarget',
     'multiEdgeTarget': 'https://metadata.datadrivendiscovery.org/types/MultiEdgeTarget',
+    'bagKey': 'https://metadata.datadrivendiscovery.org/types/BagKey',
+    'bandIndicator': 'https://metadata.datadrivendiscovery.org/types/Band',
 }
 
 D3M_RESOURCE_TYPE_CONSTANTS_TO_SEMANTIC_TYPES = {
@@ -114,7 +112,7 @@ D3M_TO_DATASET_FIELDS: typing.Dict[typing.Sequence[str], typing.Tuple[typing.Seq
     ('about', 'datasetID'): (('id',), True),
     ('about', 'datasetName'): (('name',), True),
     ('about', 'description'): (('description',), False),
-    ('about', 'datasetVersion'): (('version',), False),
+    ('about', 'datasetVersion'): (('version',), True),
     ('about', 'digest'): (('digest',), False),
     ('about', 'approximateSize'): (('approximate_stored_size',), False),
     ('about', 'citation'): (('source', 'citation'), False),
@@ -150,6 +148,8 @@ MEDIA_TYPES = {
     'text/csv': 'text/csv',
     'text/csv+gzip': 'text/csv+gzip',
     'text/plain': 'text/plain',
+    'image/tiff': 'image/tiff',
+    'image/tiff;application=geotiff': 'image/tiff;application=geotiff',
     # Legacy (before v4.0.0) resource type for GML files.
     # In "MEDIA_TYPES_REVERSE" it is not present on purpose.
     'text/gml': 'text/vnd.gml',
@@ -176,6 +176,8 @@ FILE_EXTENSIONS = {
     '.txt': 'text/plain',
     '.mp4': 'video/mp4',
     '.avi': 'video/avi',
+    '.tif': 'image/tiff',
+    '.tiff': 'image/tiff',
 }
 FILE_EXTENSIONS_REVERSE: typing.Dict[str, typing.List[str]] = collections.defaultdict(list)
 for k, v in FILE_EXTENSIONS.items():
@@ -330,7 +332,9 @@ OPENML_ID_REGEX = re.compile(r'^/d/(\d+)$')
 DEFAULT_DATETIME = datetime.datetime.fromtimestamp(0, tz=datetime.timezone.utc)
 
 if not ALL_D3M_SEMANTIC_TYPES <= metadata_base.ALL_SEMANTIC_TYPES:
-    raise ValueError("Not all D3M semantic types are defined in metadata.")
+    raise ValueError("Not all D3M semantic types are defined in metadata: {difference}".format(
+        difference=sorted(ALL_D3M_SEMANTIC_TYPES - metadata_base.ALL_SEMANTIC_TYPES),
+    ))
 
 
 class ComputeDigest(utils.Enum):
@@ -369,7 +373,7 @@ def is_simple_boundary(semantic_types: typing.Tuple[str]) -> bool:
     return 'https://metadata.datadrivendiscovery.org/types/Boundary' in semantic_types and not any(boundary_semantic_type in semantic_types for boundary_semantic_type in BOUNDARY_SEMANTIC_TYPES)
 
 
-def update_digest(hash: typing.Any, file_path: str) -> None:
+def update_digest(hash: typing.Any, file_path: pathlib.PurePath) -> None:
     with open(file_path, 'rb') as file:
         while True:
             # Reading is buffered, so we can read smaller chunks.
@@ -381,33 +385,32 @@ def update_digest(hash: typing.Any, file_path: str) -> None:
 
 # This exists as a reference implementation for computing a digest of D3M dataset.
 # Loader below does an equivalent computation as part of dataset loading process.
-def get_d3m_dataset_digest(dataset_doc_path: str) -> str:
+def get_d3m_dataset_digest(dataset_doc_path: typing.Union[str, pathlib.PurePath]) -> str:
     hash = hashlib.sha256()
 
     with open(dataset_doc_path, 'r', encoding='utf8') as dataset_doc_file:
         dataset_doc = json.load(dataset_doc_file)
 
-    dataset_path = os.path.dirname(dataset_doc_path)
+    dataset_path = pathlib.PurePath(dataset_doc_path).parent
 
     for data_resource in dataset_doc['dataResources']:
-        if data_resource.get('isCollection', False):
-            collection_path = os.path.join(dataset_path, data_resource['resPath'])
+        res_path = pathlib.PurePosixPath(data_resource['resPath'])
 
-            # We assume that we can just concat "collection_path" with a value in the column.
-            assert collection_path[-1] == '/'
+        if data_resource.get('isCollection', False):
+            collection_path = dataset_path / res_path
 
             for filename in utils.list_files(collection_path):
-                file_path = os.path.join(collection_path, filename)
+                file_path = collection_path / filename
 
                 # We include both the filename and the content.
-                hash.update(os.path.join(data_resource['resPath'], filename).encode('utf8'))
+                hash.update((res_path / filename).as_posix().encode('utf8'))
                 update_digest(hash, file_path)
 
         else:
-            resource_path = os.path.join(dataset_path, data_resource['resPath'])
+            resource_path = dataset_path / res_path
 
             # We include both the filename and the content.
-            hash.update(data_resource['resPath'].encode('utf8'))
+            hash.update(res_path.as_posix().encode('utf8'))
             update_digest(hash, resource_path)
 
     # We remove digest, if it exists in dataset description, before computing the digest over the rest.
@@ -417,6 +420,15 @@ def get_d3m_dataset_digest(dataset_doc_path: str) -> str:
     hash.update(json.dumps(dataset_doc, sort_keys=True).encode('utf8'))
 
     return hash.hexdigest()
+
+
+def get_approximate_size(size: int) -> str:
+    exponent = int((math.log10(size) // 3) * 3)
+    try:
+        unit = SIZE_TO_UNITS[exponent]
+    except KeyError as error:
+        raise KeyError("Unit string for '{exponent}' not found in lookup dictionary {SIZE_TO_UNITS}.".format(exponent=exponent, SIZE_TO_UNITS=SIZE_TO_UNITS)) from error
+    return str(size // (10 ** exponent)) + ' ' + unit
 
 
 class Loader(metaclass=utils.AbstractMetaclass):
@@ -515,7 +527,7 @@ class OpenMLDatasetLoader(Loader):
 
     def can_load(self, dataset_uri: str) -> bool:
         try:
-            parsed_uri = url_parse.urlparse(dataset_uri)
+            parsed_uri = url_parse.urlparse(dataset_uri, allow_fragments=False)
         except Exception:
             return False
 
@@ -525,7 +537,9 @@ class OpenMLDatasetLoader(Loader):
         if 'www.openml.org' != parsed_uri.netloc:
             return False
 
-        if OPENML_ID_REGEX.search(parsed_uri.path) is None:
+        parsed_uri_path = url_parse.unquote(parsed_uri.path)
+
+        if OPENML_ID_REGEX.search(parsed_uri_path) is None:
             return False
 
         return True
@@ -535,6 +549,7 @@ class OpenMLDatasetLoader(Loader):
         # See: https://github.com/openml/OpenML/issues/1027
         data, _, categorical_indicator, column_names = openml_dataset.get_data(include_row_id=True, include_ignore_attribute=True, dataset_format='dataframe')
 
+        assert isinstance(data, pandas.DataFrame)
         assert data.shape[1] == len(categorical_indicator)
         assert data.shape[1] == len(column_names)
         assert data.shape[1] == len(openml_dataset.features)
@@ -609,7 +624,7 @@ class OpenMLDatasetLoader(Loader):
         })
 
         for column_index, column_name in enumerate(column_names):
-            column_metadata = {
+            column_metadata: typing.Dict[str, typing.Any] = {
                 'semantic_types': [
                     self._semantic_type(openml_column_data_types[column_name]),
                 ],
@@ -699,47 +714,43 @@ class OpenMLDatasetLoader(Loader):
         else:
             raise exceptions.UnexpectedValueError("Data type '{data_type}' is not supported.".format(data_type=data_type))
 
-    def _get_dataset_metadata(self, openml_dataset: openml.OpenMLDataset) -> typing.Dict:
+    def _get_dataset_metadata(self, openml_dataset: openml.OpenMLDataset, dataset_id: typing.Optional[str], dataset_version: typing.Optional[str], dataset_name: typing.Optional[str]) -> typing.Dict:
         """
         Returns OpenML only metadata converted to D3M metadata. It also computes digest using this metadata and expected data digest.
         """
 
         dataset_metadata: typing.Dict[str, typing.Any] = {
-            'id': str(openml_dataset.dataset_id),
+            'id': dataset_id or 'openml_dataset_{dataset_id}'.format(dataset_id=openml_dataset.dataset_id),
+            'version': dataset_version or openml_dataset.version_label or str(openml_dataset.version),
+            'name': dataset_name or openml_dataset.name,
         }
 
-        if openml_dataset.name:
-            dataset_metadata['name'] = openml_dataset.name
         if openml_dataset.description:
             dataset_metadata['description'] = openml_dataset.description
-        if openml_dataset.version_label:
-            dataset_metadata['version'] = openml_dataset.version_label
         if openml_dataset.tag:
             dataset_metadata['keywords'] = openml_dataset.tag
 
         dataset_source: typing.Dict[str, typing.Any] = {
-            'uris': []
+            'uris': [f'https://www.openml.org/d/{openml_dataset.dataset_id}'],
         }
 
         if openml_dataset.creator:
-            dataset_source['name'] = openml_dataset.creator
+            if utils.is_sequence(openml_dataset.creator):
+                dataset_source['name'] = ', '.join(openml_dataset.creator)
+            else:
+                dataset_source['name'] = openml_dataset.creator
         if openml_dataset.licence:
             dataset_source['license'] = openml_dataset.licence
         if openml_dataset.citation:
             dataset_source['citation'] = openml_dataset.citation
         if openml_dataset.collection_date:
             dataset_source['published'] = utils.datetime_for_json(dateutil.parser.parse(openml_dataset.collection_date, default=DEFAULT_DATETIME, fuzzy=True))
-        if openml_dataset.openml_url or openml_dataset.url:
-            dataset_source['uris'].append(openml_dataset.openml_url or openml_dataset.url)
         if openml_dataset.original_data_url:
             dataset_source['uris'].append(openml_dataset.original_data_url)
         if openml_dataset.paper_url:
             dataset_source['uris'].append(openml_dataset.paper_url)
 
-        if not dataset_source['uris']:
-            del dataset_source['uris']
-        if dataset_source:
-            dataset_metadata['source'] = dataset_source
+        dataset_metadata['source'] = dataset_source
 
         if not openml_dataset.md5_checksum:
             raise exceptions.UnexpectedValueError("OpenML dataset {id} does not have MD5 checksum.".format(id=openml_dataset.dataset_id))
@@ -772,7 +783,8 @@ class OpenMLDatasetLoader(Loader):
         assert self.can_load(dataset_uri)
 
         parsed_uri = url_parse.urlparse(dataset_uri, allow_fragments=False)
-        dataset_path_id = OPENML_ID_REGEX.search(parsed_uri.path)[1]
+        parsed_uri_path = url_parse.unquote(parsed_uri.path)
+        dataset_path_id = OPENML_ID_REGEX.search(parsed_uri_path)[1]  # type: ignore
 
         try:
             # We download just metadata first.
@@ -783,25 +795,13 @@ class OpenMLDatasetLoader(Loader):
             ) from error
 
         # This converts OpenML dataset metadata to D3M dataset metadata.
-        dataset_metadata = self._get_dataset_metadata(openml_dataset)
+        dataset_metadata = self._get_dataset_metadata(openml_dataset, dataset_id, dataset_version, dataset_name)
 
-        assert dataset_metadata['id'] == dataset_path_id
-
-        # Use overrides if provided. Digest is not computed over those changes on purpose.
-        if dataset_id is not None:
-            dataset_metadata['id'] = dataset_id
-        if dataset_version is not None:
-            dataset_metadata['version'] = dataset_version
-        if dataset_name is not None:
-            dataset_metadata['name'] = dataset_name
-
-        # Other standard metadata.
+        # Other standard metadata. Those are not included in digest computation.
         dataset_metadata.update({
             'schema': metadata_base.CONTAINER_SCHEMA_VERSION,
             'structural_type': Dataset,
-            'location_uris': [
-                dataset_uri,
-            ],
+            'location_uris': [dataset_uri],
             'dimension': {
                 'name': 'resources',
                 'semantic_types': ['https://metadata.datadrivendiscovery.org/types/DatasetResource'],
@@ -847,36 +847,27 @@ class D3MDatasetLoader(Loader):
     URI should point to the ``datasetDoc.json`` file in the D3M dataset directory.
     """
 
-    SUPPORTED_VERSIONS = {'3.0', '3.1', '3.1.1', '3.1.2', '3.2.0', '3.2.1', '3.3.0', '3.3.1', '4.0.0', '4.1.0'}
+    SUPPORTED_VERSIONS = {'3.0', '3.1', '3.1.1', '3.1.2', '3.2.0', '3.2.1', '3.3.0', '3.3.1', '4.0.0', '4.1.0', '4.1.1'}
 
     def can_load(self, dataset_uri: str) -> bool:
         try:
-            parsed_uri = url_parse.urlparse(dataset_uri, allow_fragments=False)
-        except Exception:
+            path = utils.uri_to_path(dataset_uri)
+        except exceptions.InvalidArgumentValueError:
             return False
 
-        if parsed_uri.scheme != 'file':
-            return False
-
-        if parsed_uri.netloc not in ['', 'localhost']:
-            return False
-
-        if not parsed_uri.path.startswith('/'):
-            return False
-
-        if os.path.basename(parsed_uri.path) != 'datasetDoc.json':
+        if path.name != 'datasetDoc.json':
             return False
 
         return True
 
-    def _load_data(self, resources: typing.Dict, metadata: metadata_base.DataMetadata, *, dataset_path: str, dataset_doc: typing.Dict,
+    def _load_data(self, resources: typing.Dict, metadata: metadata_base.DataMetadata, *, dataset_path: pathlib.Path, dataset_doc: typing.Dict,
                    dataset_id: typing.Optional[str], dataset_digest: typing.Optional[str],
                    compute_digest: ComputeDigest, strict_digest: bool, handle_score_split: bool) -> typing.Tuple[metadata_base.DataMetadata, typing.Optional[str]]:
         # Allowing "True" for backwards compatibility.
         if compute_digest is True or compute_digest == ComputeDigest.ALWAYS or (compute_digest == ComputeDigest.ONLY_IF_MISSING and dataset_digest is None):
             hash = hashlib.sha256()
         else:
-            hash = None
+            hash = None  # type: ignore
 
         for data_resource in dataset_doc['dataResources']:
             if data_resource.get('isCollection', False):
@@ -895,14 +886,14 @@ class D3MDatasetLoader(Loader):
                 break
         else:
             for data_resource in dataset_doc['dataResources']:
-                if os.path.splitext(os.path.basename(data_resource['resPath']))[0] == 'learningData':
+                if pathlib.PurePosixPath(data_resource['resPath']).stem == 'learningData':
                     metadata = metadata.add_semantic_type((data_resource['resID'],), 'https://metadata.datadrivendiscovery.org/types/DatasetEntryPoint')
 
         # Handle a special case for SCORE dataset splits (those which have "targets.csv" file).
         # They are the same as TEST dataset splits, but we present them differently, so that
         # SCORE dataset splits have targets as part of data.
         # See: https://gitlab.com/datadrivendiscovery/d3m/issues/176
-        if handle_score_split and os.path.exists(os.path.join(dataset_path, '..', 'targets.csv')):
+        if handle_score_split and (dataset_path / '..' / 'targets.csv').exists():
             self._merge_score_targets(resources, metadata, dataset_path, hash)
 
         if hash is not None:
@@ -942,10 +933,8 @@ class D3MDatasetLoader(Loader):
              compute_digest: ComputeDigest = ComputeDigest.ONLY_IF_MISSING, strict_digest: bool = False, handle_score_split: bool = True) -> 'Dataset':
         assert self.can_load(dataset_uri)
 
-        parsed_uri = url_parse.urlparse(dataset_uri, allow_fragments=False)
-
-        dataset_doc_path = parsed_uri.path
-        dataset_path = os.path.dirname(dataset_doc_path)
+        dataset_doc_path = utils.uri_to_path(dataset_uri)
+        dataset_path = pathlib.Path(dataset_doc_path).parent
 
         try:
             with open(dataset_doc_path, 'r', encoding='utf8') as dataset_doc_file:
@@ -1014,7 +1003,7 @@ class D3MDatasetLoader(Loader):
         # SCORE dataset splits have targets as part of data. Because of this we also update
         # corresponding dataset ID.
         # See: https://gitlab.com/datadrivendiscovery/d3m/issues/176
-        if handle_score_split and os.path.exists(os.path.join(dataset_path, '..', 'targets.csv')) and document_dataset_id.endswith('_TEST'):
+        if handle_score_split and (dataset_path / '..' / 'targets.csv').exists() and document_dataset_id.endswith('_TEST'):
             document_dataset_id = document_dataset_id[:-5] + '_SCORE'
 
         dataset_metadata = {
@@ -1074,7 +1063,7 @@ class D3MDatasetLoader(Loader):
         metadata = metadata.update((), dataset_metadata)
 
         # We reconstruct the URI to normalize it.
-        location_uri = utils.fix_uri(dataset_doc_path)
+        location_uri = dataset_doc_path.as_uri()
         location_uris = list(metadata.query(()).get('location_uris', []))
         if location_uri not in location_uris:
             location_uris.insert(0, location_uri)
@@ -1166,26 +1155,21 @@ class D3MDatasetLoader(Loader):
 
         return self._add_semantic_type_for_column_index(metadata, resource_id, column_index, semantic_type)
 
-    def _load_collection(self, dataset_path: str, data_resource: typing.Dict, metadata: metadata_base.DataMetadata,
-                         hash: typing.Any) -> typing.Tuple[container_pandas.DataFrame, metadata_base.DataMetadata]:
-        assert data_resource.get('isCollection', False)
-
-        collection_path = os.path.join(dataset_path, data_resource['resPath'])
-
+    def _get_reverse_media_types_with_extensions(self, res_format: typing.Union[typing.Sequence[str], typing.Dict[str, typing.Sequence[str]]]) -> typing.Dict[str, str]:
         media_types_with_extensions = {}
         # Legacy (before v4.0.0). We obtain a list of file extensions from the global list of file extensions.
-        if utils.is_sequence(data_resource['resFormat']):
-            for format in data_resource['resFormat']:
+        if utils.is_sequence(res_format):
+            assert isinstance(res_format, typing.Sequence)
+            for format in res_format:
                 format_media_type = MEDIA_TYPES[format]
                 media_types_with_extensions[format_media_type] = [_add_extension_dot(extension) for extension in FILE_EXTENSIONS_REVERSE[format_media_type]]
         else:
-            for format, extensions in data_resource['resFormat'].items():
+            assert isinstance(res_format, typing.Dict)
+            for format, extensions in res_format.items():
                 # We allow unknown formats, hoping that they are proper media types already.
                 format_media_type = MEDIA_TYPES.get(format, format)
                 # We do not really care if file extensions are not on the global list of file extensions.
                 media_types_with_extensions[format_media_type] = [_add_extension_dot(extension) for extension in extensions]
-
-        all_media_types_set = set(media_types_with_extensions.keys())
 
         reverse_media_types_with_extensions: typing.Dict[str, str] = {}
         for media_type, extensions in media_types_with_extensions.items():
@@ -1199,26 +1183,41 @@ class D3MDatasetLoader(Loader):
 
                 reverse_media_types_with_extensions[extension] = media_type
 
+        return reverse_media_types_with_extensions
+
+    def _get_media_type(self, reverse_media_types_with_extensions: typing.Dict[str, str], file_path: pathlib.Path) -> str:
+        file_suffixes = file_path.suffixes
+
+        while file_suffixes:
+            filename_extension = ''.join(file_suffixes)
+            if filename_extension in reverse_media_types_with_extensions:
+                return reverse_media_types_with_extensions[filename_extension]
+            file_suffixes.pop(0)
+
+        raise TypeError("Unable to determine a media type for the file extension of file '{file_path}'.".format(file_path=file_path))
+
+    def _load_collection(self, dataset_path: pathlib.Path, data_resource: typing.Dict, metadata: metadata_base.DataMetadata,
+                         hash: typing.Any) -> typing.Tuple[container_pandas.DataFrame, metadata_base.DataMetadata]:
+        assert data_resource.get('isCollection', False)
+
+        reverse_media_types_with_extensions = self._get_reverse_media_types_with_extensions(data_resource['resFormat'])
+        all_media_types_set = set(reverse_media_types_with_extensions.values())
+
         filenames = []
         media_types = []
 
+        res_path = pathlib.PurePosixPath(data_resource['resPath'])
+        collection_path = dataset_path / res_path
+
         for filename in utils.list_files(collection_path):
-            file_path = os.path.join(collection_path, filename)
+            file_path = collection_path / filename
 
-            filename_extension = os.path.splitext(filename)[1]
-
-            filenames.append(filename)
-
-            try:
-                media_type = reverse_media_types_with_extensions[filename_extension]
-            except KeyError as error:
-                raise TypeError("Unable to determine a media type for the file extension of file '{filename}'.".format(filename=filename)) from error
-
-            media_types.append(media_type)
+            media_types.append(self._get_media_type(reverse_media_types_with_extensions, file_path))
+            filenames.append(filename.as_posix())
 
             if hash is not None:
                 # We include both the filename and the content.
-                hash.update(os.path.join(data_resource['resPath'], filename).encode('utf8'))
+                hash.update((res_path / filename).as_posix().encode('utf8'))
                 update_digest(hash, file_path)
 
         data = container_pandas.DataFrame({'filename': filenames}, columns=['filename'], dtype=object)
@@ -1244,10 +1243,8 @@ class D3MDatasetLoader(Loader):
             },
         })
 
-        location_base_uri = utils.fix_uri(collection_path)
-        # We want to make sure you can just concat with the filename.
-        if not location_base_uri.endswith('/'):
-            location_base_uri += '/'
+        location_base_uri = collection_path.as_uri()
+        location_base_uri = utils.ensure_uri_ends_with_slash(location_base_uri)
 
         media_types_set = set(media_types)
 
@@ -1317,7 +1314,7 @@ class D3MDatasetLoader(Loader):
                 )
 
                 row_metadata_entry = metadata_base.MetadataEntry(
-                    elements=utils.EMPTY_PMAP.set(0, column_metadata_entry),
+                    elements=utils.EMPTY_PMAP.set(0, column_metadata_entry),  # type: ignore
                     is_empty=False,
                     is_elements_empty=False,
                 )
@@ -1330,13 +1327,14 @@ class D3MDatasetLoader(Loader):
 
         return data, metadata
 
-    def _load_resource_type_table(self, dataset_path: str, data_resource: typing.Dict, metadata: metadata_base.DataMetadata,
+    def _load_resource_type_table(self, dataset_path: pathlib.Path, data_resource: typing.Dict, metadata: metadata_base.DataMetadata,
                                   hash: typing.Any) -> typing.Tuple[container_pandas.DataFrame, metadata_base.DataMetadata]:
         assert not data_resource.get('isCollection', False)
 
         data = None
         column_names = None
-        data_path = os.path.join(dataset_path, data_resource['resPath'])
+        res_path = pathlib.PurePosixPath(data_resource['resPath'])
+        data_path = dataset_path / res_path
 
         if utils.is_sequence(data_resource['resFormat']) and len(data_resource['resFormat']) == 1:
             resource_format = data_resource['resFormat'][0]
@@ -1372,7 +1370,7 @@ class D3MDatasetLoader(Loader):
             if hash is not None:
                 # We include both the filename and the content.
                 # TODO: Currently we read the file twice, once for reading and once to compute digest. Could we do it in one pass? Would it make it faster?
-                hash.update(data_resource['resPath'].encode('utf8'))
+                hash.update(res_path.as_posix().encode('utf8'))
                 update_digest(hash, data_path)
 
         else:
@@ -1454,7 +1452,7 @@ class D3MDatasetLoader(Loader):
             metadata = metadata.update((data_resource['resID'], metadata_base.ALL_ELEMENTS, i), column_metadata)
 
         current_boundary_start = None
-        current_boundary_list: typing.Tuple[str, ...] = None
+        current_boundary_list: typing.Optional[typing.Tuple[str, ...]] = None
         column_index = 0
         while column_index < len(column_names):
             column_semantic_types = metadata.query((data_resource['resID'], metadata_base.ALL_ELEMENTS, column_index)).get('semantic_types', ())
@@ -1492,30 +1490,26 @@ class D3MDatasetLoader(Loader):
 
         return data, metadata
 
-    def _load_resource_type_edgeList(self, dataset_path: str, data_resource: typing.Dict, metadata: metadata_base.DataMetadata,
+    def _load_resource_type_edgeList(self, dataset_path: pathlib.Path, data_resource: typing.Dict, metadata: metadata_base.DataMetadata,
                                      hash: typing.Any) -> typing.Tuple[container_pandas.DataFrame, metadata_base.DataMetadata]:
         assert not data_resource.get('isCollection', False)
 
         return self._load_resource_type_table(dataset_path, data_resource, metadata, hash)
 
     def _load_resource_type_graph(
-        self, dataset_path: str, data_resource: typing.Dict, metadata: metadata_base.DataMetadata, hash: typing.Any,
+        self, dataset_path: pathlib.Path, data_resource: typing.Dict, metadata: metadata_base.DataMetadata, hash: typing.Any,
     ) -> typing.Tuple[container_pandas.DataFrame, metadata_base.DataMetadata]:
         assert not data_resource.get('isCollection', False)
 
-        data_path = os.path.join(dataset_path, data_resource['resPath'])
-        collection_path = os.path.dirname(data_path)
-        filename = os.path.basename(data_path)
-        filename_extension = os.path.splitext(filename)[1]
-
-        try:
-            media_type = FILE_EXTENSIONS[filename_extension]
-        except KeyError as error:
-            raise TypeError("Unsupported file extension for file '{filename}'.".format(filename=filename)) from error
+        res_path = pathlib.PurePosixPath(data_resource['resPath'])
+        data_path = dataset_path / res_path
+        collection_path = data_path.parent
+        filename = data_path.name
+        media_type = self._get_media_type(FILE_EXTENSIONS, data_path)
 
         if hash is not None:
             # We include both the filename and the content.
-            hash.update(data_resource['resPath'].encode('utf8'))
+            hash.update(res_path.as_posix().encode('utf8'))
             update_digest(hash, data_path)
 
         data = container_pandas.DataFrame({'filename': [filename]}, columns=['filename'], dtype=object)
@@ -1541,10 +1535,8 @@ class D3MDatasetLoader(Loader):
             },
         })
 
-        location_base_uri = utils.fix_uri(collection_path)
-        # We want to make sure you can just concat with the filename.
-        if not location_base_uri.endswith('/'):
-            location_base_uri += '/'
+        location_base_uri = collection_path.as_uri()
+        location_base_uri = utils.ensure_uri_ends_with_slash(location_base_uri)
 
         column_metadata = {
             'name': 'filename',
@@ -1659,10 +1651,13 @@ class D3MDatasetLoader(Loader):
                 'unit': TIME_GRANULARITIES[unit],
             }
 
+        if column.get('spatialReferenceSystem', None):
+            column_metadata['spatial_reference_system'] = column['spatialReferenceSystem']
+
         return column_metadata
 
-    def _merge_score_targets(self, resources: typing.Dict, metadata: metadata_base.DataMetadata, dataset_path: str, hash: typing.Any) -> None:
-        targets_path = os.path.join(dataset_path, '..', 'targets.csv')
+    def _merge_score_targets(self, resources: typing.Dict, metadata: metadata_base.DataMetadata, dataset_path: pathlib.Path, hash: typing.Any) -> None:
+        targets_path = dataset_path / '..' / 'targets.csv'
 
         targets = pandas.read_csv(
             targets_path,
@@ -1725,14 +1720,15 @@ class CSVLoader(Loader):
             return False
 
         if parsed_uri.scheme == 'file':
-            if parsed_uri.netloc not in ['', 'localhost']:
+            try:
+                utils.uri_to_path(parsed_uri)
+            except exceptions.InvalidArgumentValueError:
                 return False
 
-            if not parsed_uri.path.startswith('/'):
-                return False
+        parsed_uri_path = url_parse.unquote(parsed_uri.path)
 
         for extension in ('', '.gz', '.bz2', '.zip', 'xz'):
-            if parsed_uri.path.endswith('.csv' + extension):
+            if parsed_uri_path.endswith('.csv' + extension):
                 return True
 
         return False
@@ -1757,7 +1753,7 @@ class CSVLoader(Loader):
         # CSV files do not have digest, so "ALWAYS" and "ONLY_IF_MISSING" is the same.
         # Allowing "True" for backwards compatibility.
         if compute_digest is True or compute_digest == ComputeDigest.ALWAYS or compute_digest == ComputeDigest.ONLY_IF_MISSING:
-            buffer_digest = self._get_digest(buffer)
+            buffer_digest: typing.Optional[str] = self._get_digest(buffer)
         else:
             buffer_digest = None
 
@@ -1845,9 +1841,13 @@ class CSVLoader(Loader):
             # Backwards compatibility for Pandas before 1.0.0.
             infer_compression = pandas_io_common._infer_compression
         compression = infer_compression(dataset_uri, 'infer')
-        buffer, _, compression, should_close = pandas_io_common.get_filepath_or_buffer(dataset_uri, 'utf8', compression)
-
-        return buffer, compression, should_close
+        if hasattr(pandas_io_common, '_get_filepath_or_buffer'):
+            ioargs = pandas_io_common._get_filepath_or_buffer(dataset_uri, 'utf8', compression)
+            return ioargs.filepath_or_buffer, ioargs.compression, ioargs.should_close
+        else:
+            # Backwards compatibility for Pandas before 1.2.0.
+            buffer, _, compression, should_close = pandas_io_common.get_filepath_or_buffer(dataset_uri, 'utf8', compression)
+            return buffer, compression, should_close
 
     def _get_digest(self, buffer: io.BytesIO) -> str:
         return hashlib.sha256(buffer.getvalue()).hexdigest()
@@ -1862,8 +1862,11 @@ class CSVLoader(Loader):
 
         # Pandas requires a host for "file" URIs.
         if parsed_uri.scheme == 'file' and parsed_uri.netloc == '':
-            parsed_uri = parsed_uri._replace(netloc='localhost')
-            dataset_uri = url_parse.urlunparse(parsed_uri)
+            parsed_uri_to_use = parsed_uri._replace(netloc='localhost')
+            dataset_uri_to_use = url_parse.urlunparse(parsed_uri)
+        else:
+            parsed_uri_to_use = parsed_uri
+            dataset_uri_to_use = dataset_uri
 
         dataset_size = None
         dataset_digest = None
@@ -1875,14 +1878,14 @@ class CSVLoader(Loader):
             load_lazy = None
 
             metadata, dataset_size, dataset_digest = self._load_data(
-                resources, metadata, dataset_uri=dataset_uri, compute_digest=compute_digest,
+                resources, metadata, dataset_uri=dataset_uri_to_use, compute_digest=compute_digest,
             )
 
         else:
             def load_lazy(dataset: Dataset) -> None:
                 # "dataset" can be used as "resources", it is a dict of values.
                 dataset.metadata, dataset_size, dataset_digest = self._load_data(
-                    dataset, dataset.metadata, dataset_uri=dataset_uri, compute_digest=compute_digest,
+                    dataset, dataset.metadata, dataset_uri=dataset_uri_to_use, compute_digest=compute_digest,
                 )
 
                 new_metadata = {
@@ -1902,7 +1905,8 @@ class CSVLoader(Loader):
             'schema': metadata_base.CONTAINER_SCHEMA_VERSION,
             'structural_type': Dataset,
             'id': dataset_id or dataset_uri,
-            'name': dataset_name or os.path.basename(parsed_uri.path),
+            'name': dataset_name or os.path.basename(url_parse.unquote(parsed_uri_to_use.path)),
+            'version': dataset_version or '1.0',
             'location_uris': [
                 dataset_uri,
             ],
@@ -1912,9 +1916,6 @@ class CSVLoader(Loader):
                 'length': len(resources),
             },
         }
-
-        if dataset_version is not None:
-            dataset_metadata['version'] = dataset_version
 
         if dataset_size is not None:
             dataset_metadata['stored_size'] = dataset_size
@@ -1948,7 +1949,7 @@ class SklearnExampleLoader(Loader):
         # Sklearn datasets do not have digest, so "ALWAYS" and "ONLY_IF_MISSING" is the same.
         # Allowing "True" for backwards compatibility.
         if compute_digest is True or compute_digest == ComputeDigest.ALWAYS or compute_digest == ComputeDigest.ONLY_IF_MISSING:
-            bunch_digest = self._get_digest(bunch)
+            bunch_digest: typing.Optional[str] = self._get_digest(bunch)
         else:
             bunch_digest = None
 
@@ -2145,6 +2146,7 @@ class SklearnExampleLoader(Loader):
             'structural_type': Dataset,
             'id': dataset_id or dataset_uri,
             'name': dataset_name or dataset_path,
+            'version': dataset_version or '1.0',
             'location_uris': [
                 dataset_uri,
             ],
@@ -2154,9 +2156,6 @@ class SklearnExampleLoader(Loader):
                 'length': len(resources),
             },
         }
-
-        if dataset_version is not None:
-            dataset_metadata['version'] = dataset_version
 
         if dataset_description is not None:
             dataset_metadata['description'] = dataset_description
@@ -2177,7 +2176,7 @@ class D3MDatasetSaver(Saver):
     URI should point to the ``datasetDoc.json`` file in the D3M dataset directory.
     """
 
-    VERSION = '4.1.0'
+    VERSION = '4.1.1'
 
     def can_save(self, dataset_uri: str) -> bool:
         if not self._is_dataset(dataset_uri):
@@ -2194,29 +2193,22 @@ class D3MDatasetSaver(Saver):
         except Exception:
             return False
 
-        if os.path.basename(parsed_uri.path) != 'datasetDoc.json':
+        parsed_uri_path = pathlib.PurePosixPath(url_parse.unquote(parsed_uri.path))
+
+        if parsed_uri_path.name != 'datasetDoc.json':
             return False
 
         return True
 
     def _is_local_file(self, uri: str) -> bool:
         try:
-            parsed_uri = url_parse.urlparse(uri, allow_fragments=False)
-        except Exception:
-            return False
-
-        if parsed_uri.scheme != 'file':
-            return False
-
-        if parsed_uri.netloc not in ['', 'localhost']:
-            return False
-
-        if not parsed_uri.path.startswith('/'):
+            utils.uri_to_path(uri)
+        except exceptions.InvalidArgumentValueError:
             return False
 
         return True
 
-    def _get_column_description(self, column_index: int, column_name: str, column_metadata: typing.Dict) -> typing.Dict:
+    def _get_column_description(self, column_index: int, column_name: str, column_metadata: typing.Mapping) -> typing.Dict:
         column = {
             'colIndex': column_index,
             'colName': column_name,
@@ -2251,7 +2243,34 @@ class D3MDatasetSaver(Saver):
 
         return column
 
-    def _get_collection_resource_description(self, dataset: 'Dataset', resource_id: str, resource: typing.Any, dataset_location_base_path: typing.Optional[str]) -> typing.Dict:
+    def _get_file_extension(self, file_path: pathlib.PurePath, resource_format: str, file_extensions_set: typing.Set[str]) -> str:
+        file_suffixes = file_path.suffixes
+
+        while file_suffixes:
+            filename_extension = ''.join(file_suffixes)
+            filename_extension = _remove_extension_dot(filename_extension)
+            if filename_extension in file_extensions_set:
+                return filename_extension
+            file_suffixes.pop(0)
+
+        file_suffixes = file_path.suffixes
+        media_type = MEDIA_TYPES.get(resource_format, resource_format)
+        file_extensions = set(FILE_EXTENSIONS_REVERSE.get(media_type, []))
+
+        while file_suffixes:
+            filename_extension = ''.join(file_suffixes)
+            if filename_extension in file_extensions:
+                return _remove_extension_dot(filename_extension)
+            file_suffixes.pop(0)
+
+        filename_extension = ''.join(file_path.suffixes)
+        filename_extension = _remove_extension_dot(filename_extension)
+        if not filename_extension:
+            raise ValueError("A filename without a file extension in a collection resource: {file_path}".format(file_path=file_path))
+
+        return filename_extension
+
+    def _get_collection_resource_description(self, dataset: 'Dataset', resource_id: str, resource: typing.Any, dataset_location_base_path: typing.Optional[pathlib.PurePath]) -> typing.Dict:
         if not isinstance(resource, container_pandas.DataFrame):
             raise exceptions.InvalidArgumentTypeError("Saving a D3M dataset with a collection resource which is not a DataFrame, but '{structural_type}'.".format(
                 structural_type=type(resource),
@@ -2302,19 +2321,18 @@ class D3MDatasetSaver(Saver):
             # We cannot determine the resource path so we use a hard-coded one.
             resource_path = 'files/'
         else:
-            location_base_path = url_parse.urlparse(local_location_base_uris[0], allow_fragments=False).path
+            location_base_path = utils.uri_to_path(local_location_base_uris[0])
 
-            # This is a way to check that "dataset_location_base_path" is a prefix of "location_base_path".
-            if os.path.commonpath([location_base_path, dataset_location_base_path]) != dataset_location_base_path:
+            try:
+                resource_path = location_base_path.relative_to(dataset_location_base_path).as_posix()
+            except ValueError as error:
                 raise exceptions.NotSupportedError(
-                    "Saving a D3M dataset with a collection resource with files location not under the dataset directory.",
-                )
+                    f"Saving a D3M dataset with a collection resource with files location ({location_base_path}) not under the dataset directory ({dataset_location_base_path}).",
+                ) from error
 
-            resource_path = location_base_path[len(dataset_location_base_path) + 1:]
-
-        # Just a matter of style.
-        if not resource_path.endswith('/'):
-            resource_path += '/'
+            # Just a matter of style.
+            if not resource_path.endswith('/'):
+                resource_path += '/'
 
         resource_formats_set = set()
         # "media_types" for "ALL_ELEMENTS" is an union of all rows.
@@ -2323,6 +2341,7 @@ class D3MDatasetSaver(Saver):
             resource_formats_set.add(MEDIA_TYPES_REVERSE.get(media_type, media_type))
 
         resource_formats = {}
+        resource_formats_of_sets: typing.Dict[str, typing.Set] = {}
 
         # An empty collection? Or just a collection resource without metadata?
         if not resource_formats_set:
@@ -2331,26 +2350,16 @@ class D3MDatasetSaver(Saver):
 
         # An optimized case, all files in a collection belong to the same resource format.
         elif len(resource_formats_set) == 1:
-            file_extensions_set = set()
+            file_extensions_set: typing.Set[str] = set()
+            resource_format = resource_formats_set.pop()
+            resource_formats_of_sets[resource_format] = file_extensions_set
+
             for filename in resource.iloc[:, 0]:
-                root, ext = os.path.splitext(filename)
-                if not ext:
-                    raise ValueError("A filename without a file extension in a collection resource: {filename}".format(filename=filename))
-                ext = _remove_extension_dot(ext)
+                ext = self._get_file_extension(pathlib.PurePosixPath(filename), resource_format, file_extensions_set)
                 file_extensions_set.add(ext)
 
-            # Sorting to have reproducibility.
-            resource_formats[resource_formats_set.pop()] = sorted(file_extensions_set)
-
         else:
-            resource_formats_of_sets: typing.Dict[str, typing.Set] = {}
-
             for row_index, filename in enumerate(resource.iloc[:, 0]):
-                root, ext = os.path.splitext(filename)
-                if not ext:
-                    raise ValueError("A filename without a file extension in a collection resource: {filename}".format(filename=filename))
-                ext = _remove_extension_dot(ext)
-
                 try:
                     media_types = dataset.metadata.query((resource_id, row_index, 0))['media_types']
                 except KeyError:
@@ -2365,11 +2374,14 @@ class D3MDatasetSaver(Saver):
                 if resource_format not in resource_formats_of_sets:
                     resource_formats_of_sets[resource_format] = set()
 
-                resource_formats_of_sets[resource_format].add(ext)
+                file_extensions_set = resource_formats_of_sets[resource_format]
 
-            for resource_format, file_extensions in resource_formats_of_sets.items():
-                # Sorting to have reproducibility.
-                resource_formats[resource_format] = sorted(file_extensions)
+                ext = self._get_file_extension(pathlib.PurePosixPath(filename), resource_format, file_extensions_set)
+                file_extensions_set.add(ext)
+
+        for resource_format, file_extensions in resource_formats_of_sets.items():
+            # Sorting to have reproducibility.
+            resource_formats[resource_format] = sorted(file_extensions)
 
         resource_type = [SEMANTIC_TYPES_TO_D3M_RESOURCE_TYPES[semantic_type] for semantic_type in metadata.get('semantic_types', []) if semantic_type in SEMANTIC_TYPES_TO_D3M_RESOURCE_TYPES]
 
@@ -2399,7 +2411,7 @@ class D3MDatasetSaver(Saver):
         return resource_description
 
     # We do not use "dataset_location_base_path" but we keep it for all "_get_*_resource_description" methods to have the same signature.
-    def _get_dataframe_resource_description(self, dataset: 'Dataset', resource_id: str, resource: typing.Any, dataset_location_base_path: typing.Optional[str]) -> typing.Dict:
+    def _get_dataframe_resource_description(self, dataset: 'Dataset', resource_id: str, resource: typing.Any, dataset_location_base_path: typing.Optional[pathlib.PurePath]) -> typing.Dict:
         if dataset.metadata.has_semantic_type((resource_id,), 'https://metadata.datadrivendiscovery.org/types/EdgeList'):
             res_type = 'edgeList'
         else:
@@ -2428,7 +2440,7 @@ class D3MDatasetSaver(Saver):
         return resource_description
 
     # TODO: Make it easier to subclass to support other resource types.
-    def _get_resource_description(self, dataset: 'Dataset', resource_id: str, resource: typing.Any, dataset_location_base_path: typing.Optional[str]) -> typing.Dict:
+    def _get_resource_description(self, dataset: 'Dataset', resource_id: str, resource: typing.Any, dataset_location_base_path: typing.Optional[pathlib.PurePath]) -> typing.Dict:
         if dataset.metadata.has_semantic_type((resource_id,), 'https://metadata.datadrivendiscovery.org/types/FilesCollection'):
             return self._get_collection_resource_description(dataset, resource_id, resource, dataset_location_base_path)
 
@@ -2541,6 +2553,9 @@ class D3MDatasetSaver(Saver):
                     except KeyError as error:
                         raise exceptions.InvalidMetadataError(f"'time_granularity' is invalid, in metadata of column {column_index} of resource '{resource_id}'.") from error
 
+                if 'spatial_reference_system' in column_metadata:
+                    column['spatialReferenceSystem'] = column_metadata['spatial_reference_system']
+
                 columns.append(column)
 
         return columns
@@ -2556,30 +2571,31 @@ class D3MDatasetSaver(Saver):
 
         for d3m_path, (dataset_path, required) in D3M_TO_DATASET_FIELDS.items():
             value = utils.get_dict_path(dataset_root_metadata, dataset_path)
-            if value is not None:
+            if (required and value) or (not required and value is not None):
                 utils.set_dict_path(dataset_description, d3m_path, value)
             elif required:
                 raise exceptions.InvalidMetadataError(f"Dataset metadata field '{'.'.join(dataset_path)}' is required when saving.")
 
         for x in [dataset_root_metadata.get('stored_size', None), dataset_description['about'].get('approximateSize', None)]:
             if x is not None:
-                exponent = int((math.log10(x) // 3) * 3)
-                try:
-                    unit = SIZE_TO_UNITS[exponent]
-                except KeyError as error:
-                    raise KeyError("Unit string for '{exponent}' not found in lookup dictionary {SIZE_TO_UNITS}.".format(exponent=exponent, SIZE_TO_UNITS=SIZE_TO_UNITS)) from error
-                dataset_description['about']['approximateSize'] = str(x // (10 ** exponent)) + ' ' + unit
+                dataset_description['about']['approximateSize'] = get_approximate_size(x)
                 break
 
         # We are only using the first URI due to design of D3M dataset format. Remaining URIs should be stored in qualities.
-        if dataset_root_metadata.get('source', {}).get('uris', []):
-            dataset_description['about']['sourceURI'] = dataset_root_metadata['source']['uris'][0]
+        remote_source_uris = [source_uri for source_uri in dataset_root_metadata.get('source', {}).get('uris', []) if not self._is_local_file(source_uri)]
+        if remote_source_uris:
+            dataset_description['about']['sourceURI'] = remote_source_uris[0]
 
-        dataset_location_uris = [location_uri for location_uri in dataset_root_metadata.get('location_uris', []) if self._is_local_file(location_uri)]
+        # We are only using the first URI due to design of D3M dataset format. Remaining URIs should be stored in qualities.
+        remote_dataset_location_uris = [location_uri for location_uri in dataset_root_metadata.get('location_uris', []) if not self._is_local_file(location_uri)]
+        if remote_dataset_location_uris:
+            dataset_description['about']['datasetURI'] = remote_dataset_location_uris[0]
 
-        if dataset_location_uris:
+        local_dataset_location_uris = [location_uri for location_uri in dataset_root_metadata.get('location_uris', []) if self._is_local_file(location_uri)]
+
+        if local_dataset_location_uris:
             # If there are multiple local URIs, we pick the first.
-            dataset_location_base_path = os.path.dirname(url_parse.urlparse(dataset_location_uris[0], allow_fragments=False).path)
+            dataset_location_base_path: typing.Optional[pathlib.PurePath] = utils.uri_to_path(local_dataset_location_uris[0]).parent
         else:
             dataset_location_base_path = None
 
@@ -2635,10 +2651,10 @@ class D3MDatasetSaver(Saver):
         if preserve_metadata:
             dataset_description['qualities'] = self._generate_metadata_qualities(dataset)
 
-        dataset_path = os.path.dirname(url_parse.urlparse(dataset_uri, allow_fragments=False).path)
+        dataset_path = pathlib.Path(utils.uri_to_path(dataset_uri)).parent
         os.makedirs(dataset_path, 0o755, exist_ok=False)
 
-        dataset_description_path = os.path.join(dataset_path, 'datasetDoc.json')
+        dataset_description_path = dataset_path / 'datasetDoc.json'
 
         # We use "x" mode to make sure file does not already exist.
         with open(dataset_description_path, 'x', encoding='utf8') as f:
@@ -2656,13 +2672,13 @@ class D3MDatasetSaver(Saver):
             json.dump(dataset_description, f, indent=2, allow_nan=False)
 
     # TODO: Make it easier to subclass to support non-local "location_base_uris".
-    def _save_collection(self, dataset: 'Dataset', dataset_uri: str, dataset_path: str, resource_description: typing.Dict, resource_id: str, resource: typing.Any) -> None:
+    def _save_collection(self, dataset: 'Dataset', dataset_uri: str, dataset_path: pathlib.Path, resource_description: typing.Dict, resource_id: str, resource: typing.Any) -> None:
         # Here we can assume collection resource is a DataFrame which contains exactly one
         # column containing filenames. This has been verified in "_get_collection_resource_description".
         assert isinstance(resource, container_pandas.DataFrame), type(resource)
         assert len(resource.columns) == 1, resource.columns
 
-        already_copied: typing.Set[typing.Tuple[str, str]] = set()
+        already_copied: typing.Set[typing.Tuple[pathlib.PurePath, pathlib.Path]] = set()
         linking_warning_issued = False
 
         for row_index, filename in enumerate(resource.iloc[:, 0]):
@@ -2675,18 +2691,15 @@ class D3MDatasetSaver(Saver):
             assert len(local_location_base_uris) == 1, local_location_base_uris
             local_location_base_uri = local_location_base_uris[0]
 
-            # "location_base_uris" should be made so that we can just concat with the filename
-            # ("location_base_uris" end with "/").
-            source_uri = local_location_base_uri + filename
-            source_path = url_parse.urlparse(source_uri, allow_fragments=False).path
-
-            destination_path = os.path.join(dataset_path, resource_description['resPath'], filename)
+            filename_path = pathlib.PurePosixPath(filename)
+            source_path = utils.uri_to_path(local_location_base_uri) / filename_path
+            destination_path = dataset_path / pathlib.PurePosixPath(resource_description['resPath']) / filename_path
 
             # Multiple rows can point to the same file, so we do not have to copy them multiple times.
             if (source_path, destination_path) in already_copied:
                 continue
 
-            os.makedirs(os.path.dirname(destination_path), 0o755, exist_ok=True)
+            os.makedirs(destination_path.parent, 0o755, exist_ok=True)
 
             linked = False
 
@@ -2745,8 +2758,8 @@ class D3MDatasetSaver(Saver):
             already_copied.add((source_path, destination_path))
 
     # TODO: Make it easier to subclass to support other column types.
-    def _save_dataframe(self, dataset: 'Dataset', dataset_path: str, resource_description: typing.Dict, resource_id: str, resource: typing.Any) -> None:
-        destination_path = os.path.join(dataset_path, resource_description['resPath'])
+    def _save_dataframe(self, dataset: 'Dataset', dataset_path: pathlib.Path, resource_description: typing.Dict, resource_id: str, resource: typing.Any) -> None:
+        destination_path = dataset_path / pathlib.PurePosixPath(resource_description['resPath'])
         # A subset of "simple_data_types".
         # TODO: Support additional types.
         #       Dicts we can try to convert to "json" column type. Lists of floats we can convert to "realVector".
@@ -2763,13 +2776,13 @@ class D3MDatasetSaver(Saver):
                 if not issubclass(structural_type, supported_column_structural_types):
                     raise exceptions.NotSupportedError("Saving a D3M dataset with a column with structural type '{structural_type}' is not supported.".format(structural_type=structural_type))
 
-        os.makedirs(os.path.dirname(destination_path), 0o755, exist_ok=True)
+        os.makedirs(destination_path.parent, 0o755, exist_ok=True)
 
         # We use "x" mode to make sure file does not already exist.
-        resource.to_csv(destination_path, mode='x', encoding='utf8')
+        resource.to_csv(destination_path, mode='x', encoding='utf8', line_terminator='\n')
 
     # TODO: Make it easier to subclass to support other resource types.
-    def _save_resource(self, dataset: 'Dataset', dataset_uri: str, dataset_path: str, resource_description: typing.Dict, resource_id: str, resource: typing.Any) -> None:
+    def _save_resource(self, dataset: 'Dataset', dataset_uri: str, dataset_path: pathlib.Path, resource_description: typing.Dict, resource_id: str, resource: typing.Any) -> None:
         if resource_description.get('isCollection', False):
             self._save_collection(dataset, dataset_uri, dataset_path, resource_description, resource_id, resource)
 
@@ -2809,7 +2822,7 @@ class Dataset(dict):
         DEPRECATED: argument ignored.
     """
 
-    metadata: metadata_base.DataMetadata = None
+    metadata: metadata_base.DataMetadata
     loaders: typing.List[Loader] = [
         D3MDatasetLoader(),
         CSVLoader(),
@@ -3048,8 +3061,7 @@ class Dataset(dict):
 
         Returns
         -------
-        Dict[str, List[Tuple[str, bool, int, int, Dict]]]
-            Returns the relation graph in adjacency representation.
+        Returns the relation graph in adjacency representation.
         """
 
         graph: typing.Dict[str, typing.List[typing.Tuple[str, bool, int, int, typing.Dict]]] = collections.defaultdict(list)
@@ -3088,7 +3100,7 @@ class Dataset(dict):
 
     def get_column_references_by_column_index(self) -> typing.Dict[str, typing.Dict[metadata_base.ColumnReference, typing.List[metadata_base.ColumnReference]]]:
         references: typing.Dict[str, typing.Dict[metadata_base.ColumnReference, typing.List[metadata_base.ColumnReference]]] = {
-            'confidence_for': {},
+            'score_for': {},
             'rank_for': {},
             'boundary_for': {},
             'foreign_key': {},
@@ -3100,7 +3112,7 @@ class Dataset(dict):
 
             resource_references = self.metadata.get_column_references_by_column_index(resource_id, at=(resource_id,))
 
-            references['confidence_for'].update(resource_references['confidence_for'])
+            references['score_for'].update(resource_references['score_for'])
             references['rank_for'].update(resource_references['rank_for'])
             references['boundary_for'].update(resource_references['boundary_for'])
             references['foreign_key'].update(resource_references['foreign_key'])
@@ -3108,7 +3120,7 @@ class Dataset(dict):
         return references
 
     @classmethod
-    def _canonical_dataset_description(cls, dataset_description: typing.Dict, *, set_no_value: bool = False) -> typing.Dict:
+    def _canonical_dataset_description(cls, dataset_description: typing.Mapping, *, set_no_value: bool = False) -> typing.Dict:
         """
         Currently, this is just removing any local URIs the description might have.
         """
@@ -3166,6 +3178,10 @@ class Dataset(dict):
 
 
 def dataset_serializer(obj: Dataset) -> dict:
+    """
+    Serializer to be used with PyArrow.
+    """
+
     data = {
         'metadata': obj.metadata,
         'dataset': dict(obj),
@@ -3178,16 +3194,12 @@ def dataset_serializer(obj: Dataset) -> dict:
 
 
 def dataset_deserializer(data: dict) -> Dataset:
+    """
+    Deserializer to be used with PyArrow.
+    """
+
     dataset = data.get('type', Dataset)(data['dataset'], data['metadata'])
     return dataset
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        Dataset, 'd3m.dataset',
-        custom_serializer=dataset_serializer,
-        custom_deserializer=dataset_deserializer,
-    )
 
 
 def get_dataset(
@@ -3201,7 +3213,7 @@ def get_dataset(
         if dataset_uri in datasets:
             dataset_uri = datasets[dataset_uri]
 
-    dataset_uri = utils.fix_uri(dataset_uri)
+    dataset_uri = utils.path_to_uri(dataset_uri)
 
     return Dataset.load(dataset_uri, compute_digest=compute_digest, strict_digest=strict_digest, lazy=lazy)
 
@@ -3253,7 +3265,7 @@ def describe_handler(arguments: argparse.Namespace, *, dataset_resolver: typing.
                     indent=(getattr(arguments, 'indent', 2) or None),
                     sort_keys=getattr(arguments, 'sort_keys', False),
                     allow_nan=False,
-                )  # type: ignore
+                )
                 output_stream.write('\n')
         except Exception as error:
             if getattr(arguments, 'continue', False):
@@ -3281,7 +3293,7 @@ def convert_handler(arguments: argparse.Namespace, *, dataset_resolver: typing.C
     except Exception as error:
         raise Exception(f"Error loading dataset '{arguments.input_uri}'.") from error
 
-    output_uri = utils.fix_uri(arguments.output_uri)
+    output_uri = utils.path_to_uri(arguments.output_uri)
 
     try:
         dataset.save(output_uri, preserve_metadata=getattr(arguments, 'preserve_metadata', True))

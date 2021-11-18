@@ -1,4 +1,3 @@
-import builtins
 import copy
 import io
 import json
@@ -12,12 +11,19 @@ import jsonschema
 import numpy
 
 from d3m import container, types, utils
-from d3m.container import list
-from d3m.metadata import base as metadata_base
+from d3m.container import list as list_module
+from d3m.metadata import base as metadata_base, hyperparams
 
 
 class TestUtils(unittest.TestCase):
     def test_get_type_arguments(self):
+        self.assertEqual(utils.get_type_arguments(typing.Sequence[str]), {
+            typing.T_co: str,
+        })
+        self.assertEqual(utils.get_type_arguments(hyperparams.Hyperparameter[typing.Optional[int]]), {
+            hyperparams.T: typing.Union[int, type(None)],
+        })
+
         A = typing.TypeVar('A')
         B = typing.TypeVar('B')
         C = typing.TypeVar('C')
@@ -66,10 +72,21 @@ class TestUtils(unittest.TestCase):
         })
 
     def test_issubclass(self):
-        self.assertTrue(utils.is_subclass(list.List, types.Container))
+        self.assertTrue(utils.is_subclass(list_module.List, types.Container))
 
-        T1 = typing.TypeVar('T1', bound=list.List)
-        self.assertTrue(utils.is_subclass(list.List, T1))
+        T1 = typing.TypeVar('T1', bound=list_module.List)
+        self.assertTrue(utils.is_subclass(list_module.List, T1))
+
+        self.assertTrue(utils.is_subclass(typing.Union[int, float], typing.Union[int, float, str]))
+        self.assertTrue(utils.is_subclass(int, typing.Union[int, float, str]))
+        self.assertFalse(utils.is_subclass(typing.Union[int, float, dict], typing.Union[int, float, str]))
+
+        self.assertTrue(utils.is_subclass(typing.Union[int, float], typing.Union[int, typing.Union[float, typing.Union[str]]]))
+
+        self.assertTrue(utils.is_subclass(list, typing.List))
+
+    def test_isinstance(self):
+        self.assertTrue(utils.is_instance(1, (str, int, float, bool)))
 
     def test_create_enum(self):
         obj = {
@@ -128,13 +145,13 @@ class TestUtils(unittest.TestCase):
         Foobar2 = utils.create_enum_from_json_schema_enum('Foobar2', obj, 'definitions.foobar2.items.anyOf[*].properties.type.enum[*]')
         Foobar3 = utils.create_enum_from_json_schema_enum('Foobar3', obj, 'definitions.foobar3.enum[*]')
 
-        self.assertSequenceEqual(builtins.list(Foobar1.__members__.keys()), ['AAA', 'BBB', 'CCC', 'DDD'])
+        self.assertSequenceEqual(list(Foobar1.__members__.keys()), ['AAA', 'BBB', 'CCC', 'DDD'])
         self.assertSequenceEqual([value.value for value in Foobar1.__members__.values()], ['AAA', 'BBB', 'CCC', 'DDD'])
 
-        self.assertSequenceEqual(builtins.list(Foobar2.__members__.keys()), ['EEE', 'FFF', 'GGG'])
+        self.assertSequenceEqual(list(Foobar2.__members__.keys()), ['EEE', 'FFF', 'GGG'])
         self.assertSequenceEqual([value.value for value in Foobar2.__members__.values()], ['EEE', 'FFF', 'GGG'])
 
-        self.assertSequenceEqual(builtins.list(Foobar3.__members__.keys()), ['HHH', 'III', 'JJJ'])
+        self.assertSequenceEqual(list(Foobar3.__members__.keys()), ['HHH', 'III', 'JJJ'])
         self.assertSequenceEqual([value.value for value in Foobar3.__members__.values()], ['HHH', 'III', 'JJJ'])
 
         self.assertTrue(Foobar1.AAA.name == 'AAA')
@@ -148,18 +165,18 @@ class TestUtils(unittest.TestCase):
             BBB = 2
             CCC = 3
 
-        self.assertSequenceEqual(builtins.list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC'])
+        self.assertSequenceEqual(list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC'])
         self.assertSequenceEqual([value.value for value in Foobar.__members__.values()], [1, 2, 3])
 
         with self.assertRaises(AttributeError):
             Foobar.register_value('CCC', 5)
 
-        self.assertSequenceEqual(builtins.list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC'])
+        self.assertSequenceEqual(list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC'])
         self.assertSequenceEqual([value.value for value in Foobar.__members__.values()], [1, 2, 3])
 
         Foobar.register_value('DDD', 4)
 
-        self.assertSequenceEqual(builtins.list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC', 'DDD'])
+        self.assertSequenceEqual(list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC', 'DDD'])
         self.assertSequenceEqual([value.value for value in Foobar.__members__.values()], [1, 2, 3, 4])
 
         self.assertEqual(Foobar['DDD'], 'DDD')
@@ -167,7 +184,7 @@ class TestUtils(unittest.TestCase):
 
         Foobar.register_value('EEE', 4)
 
-        self.assertSequenceEqual(builtins.list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC', 'DDD', 'EEE'])
+        self.assertSequenceEqual(list(Foobar.__members__.keys()), ['AAA', 'BBB', 'CCC', 'DDD', 'EEE'])
         self.assertSequenceEqual([value.value for value in Foobar.__members__.values()], [1, 2, 3, 4, 4])
 
         self.assertEqual(Foobar['EEE'], 'DDD')
@@ -317,7 +334,7 @@ class TestUtils(unittest.TestCase):
     def test_json_schema_python_type(self):
         schemas = copy.copy(metadata_base.SCHEMAS)
         schemas['http://example.com/testing_python_type.json'] = {
-            'id': 'http://example.com/testing_python_type.json',
+            '$id': 'http://example.com/testing_python_type.json',
             'properties': {
                 'foobar': {
                     '$ref': 'https://metadata.datadrivendiscovery.org/schemas/v0/definitions.json#/definitions/python_type',
@@ -336,7 +353,7 @@ class TestUtils(unittest.TestCase):
     def test_json_schema_numeric(self):
         schemas = copy.copy(metadata_base.SCHEMAS)
         schemas['http://example.com/testing_numeric.json'] = {
-            'id': 'http://example.com/testing_numeric.json',
+            '$id': 'http://example.com/testing_numeric.json',
             'properties': {
                 'int': {
                     'type': 'integer',
@@ -381,8 +398,8 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(utils.json_structure_equals({}, {'extra_key': 'value'}))
         self.assertTrue(utils.json_structure_equals({}, {'extra_key': 'value'}, ignore_keys={'extra_key'}))
 
-        list1 = {'a': builtins.list('type')}
-        list2 = {'a': builtins.list('typo')}
+        list1 = {'a': list('type')}
+        list2 = {'a': list('typo')}
         self.assertFalse(utils.json_structure_equals(list1, list2))
 
         json1 = {

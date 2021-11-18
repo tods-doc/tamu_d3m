@@ -1,0 +1,26 @@
+digraph G {
+    rankdir=LR;
+
+    node [shape=ellipse];
+
+    "https://metadata.datadrivendiscovery.org/";
+    "https://docs.datadrivendiscovery.org/";
+
+    node [shape=diamond];
+
+    images_docker [label="Docker images"];
+
+    node [shape=rectangle];
+
+    d3m -> images [label="build images"];
+    d3m -> docs [label="build all docs"];
+    d3m -> "https://metadata.datadrivendiscovery.org/" [label="publish"];
+
+    primitives -> images [label="build images"];
+
+    images -> docs [label="build all docs"];
+    images -> images_docker [label="publish"];
+    images -> "primitives-tests" [label="test primitives"];
+
+    docs -> "https://docs.datadrivendiscovery.org/" [label="publish"];
+}

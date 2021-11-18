@@ -7,12 +7,10 @@ git fetch upstream
 
 asv machine --yes --config tests/asv.conf.json
 
-ASV_OUTPUT=$(asv continuous upstream/devel HEAD -s -f 1.1 -e --config tests/asv.conf.json)
-echo "$ASV_OUTPUT"
+echo ""
 
-if echo "$ASV_OUTPUT" | egrep -q "(SOME BENCHMARKS HAVE CHANGED SIGNIFICANTLY)|( failed$)" ; then
-  echo "Benchmarks have errors."
-  exit 1
-else
+if asv continuous upstream/devel HEAD --split --factor 1.1 --show-stderr --config tests/asv.conf.json ; then
   echo "Benchmarks ran without errors."
+else
+  echo "Benchmarks have errors."
 fi

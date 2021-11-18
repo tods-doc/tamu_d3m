@@ -11,15 +11,18 @@ import functools
 import gzip
 import hashlib
 import inspect
+import io
 import json
 import logging
 import numbers
 import operator
 import os
 import os.path
+import pathlib
 import pickle
 import random
 import re
+import time
 import types
 import typing
 import sys
@@ -27,27 +30,27 @@ import unittest
 import uuid
 from urllib import parse as url_parse
 
-import custom_inherit  # type: ignore
-import frozendict  # type: ignore
-import git  # type: ignore
-import jsonpath_ng  # type: ignore
-import jsonschema  # type: ignore
-import numpy  # type: ignore
-import pandas  # type: ignore
-import typing_inspect  # type: ignore
-import yaml  # type: ignore
-import pyrsistent  # type: ignore
-from jsonschema import validators  # type: ignore
-from numpy import random as numpy_random  # type: ignore
-from pytypes import type_util  # type: ignore
+import custom_inherit
+import frozendict
+import git
+import jsonpath_ng
+import jsonschema
+import numpy
+import pandas
+import typing_inspect
+import yaml
+import pyrsistent
+from jsonschema import validators
+from numpy import random as numpy_random
+from pytypes import type_util
 
 import d3m
 from d3m import deprecate, exceptions
 
 if yaml.__with_libyaml__:
-    from yaml import CSafeLoader as SafeLoader, CSafeDumper as SafeDumper  # type: ignore
+    from yaml import CSafeLoader as SafeLoader, CSafeDumper as SafeDumper
 else:
-    from yaml import SafeLoader, SafeDumper
+    from yaml import SafeLoader, SafeDumper  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,11 @@ KNOWN_IMMUTABLE_TYPES = (
 
 HASH_ID_NAMESPACE = uuid.UUID('8614b2cc-89ef-498e-9254-833233b3959b')
 
-PACKAGE_BASE = os.path.dirname(d3m.__file__)
+PACKAGE_BASE = pathlib.Path(d3m.__file__).parent.resolve()
+
+DRIVE_REGEX = re.compile('^/[a-zA-Z]:/')
+
+TYPING_GENERIC_ALIAS = getattr(typing_inspect, 'typingGenericAlias', ())
 
 
 def current_git_commit(path: str, search_parent_directories: bool = True) -> str:
@@ -107,53 +114,19 @@ def get_type_arguments(cls: type, *, unique_names: bool = False) -> typing.Dict[
     A mapping from type argument to its type.
     """
 
-    # Using typing.TypeVar in type signature does not really work, so we are using type instead.
-    # See: https://github.com/python/typing/issues/520
     result: typing.Dict[type, type] = {}
+    result_with_depth = _get_type_arguments(cls, [], 0)
 
-    for base_class in inspect.getmro(typing_inspect.get_origin(cls)):
-        if base_class == typing.Generic:
-            break
+    for parameter, (argument, _) in result_with_depth.items():
+        visited: typing.Set[type] = set()
+        while typing_inspect.is_typevar(argument) and argument in result_with_depth:
+            if argument in visited:
+                raise RuntimeError("Loop while resolving type variables.")
+            visited.add(argument)
 
-        if not typing_inspect.is_generic_type(base_class):
-            continue
+            argument, _ = result_with_depth[argument]
 
-        parameters = typing_inspect.get_parameters(base_class)
-
-        # We are using _select_Generic_superclass_parameters and not get_Generic_parameters
-        # so that we can handle the case where the result is None.
-        # See: https://github.com/Stewori/pytypes/issues/20
-        arguments = type_util._select_Generic_superclass_parameters(cls, base_class)
-
-        if arguments is None:
-            arguments = [typing.Any] * len(parameters)
-
-        if len(parameters) != len(arguments):
-            raise TypeError("Number of parameters does not match number of arguments.")
-
-        for parameter, argument in zip(parameters, arguments):
-            if type_util.resolve_fw_decl(argument, module_name=base_class.__module__, globs=dir(sys.modules[base_class.__module__]))[1]:
-                argument = argument.__forward_value__
-
-            visited: typing.Set[type] = set()
-            while typing_inspect.is_typevar(argument) and argument in result:
-                if argument in visited:
-                    raise RuntimeError("Loop while resolving type variables.")
-                visited.add(argument)
-
-                argument = result[argument]
-
-            if parameter == argument:
-                argument = typing.Any
-
-            if parameter in result:
-                if result[parameter] != argument:
-                    raise TypeError("Different types for same parameter across class bases: {type1} vs. {type2}".format(
-                        type1=result[parameter],
-                        type2=argument,
-                    ))
-            else:
-                result[parameter] = argument
+        result[parameter] = argument
 
     if unique_names:
         type_parameter_names = [parameter.__name__ for parameter in result.keys()]
@@ -168,11 +141,74 @@ def get_type_arguments(cls: type, *, unique_names: bool = False) -> typing.Dict[
     return result
 
 
-def is_instance(obj: typing.Any, cls: typing.Union[type, typing.Tuple[type]]) -> bool:
+def _get_type_arguments(cls: type, parent_arguments: typing.List[typing.Any], depth: int) -> typing.Dict[type, typing.Tuple[type, int]]:
+    parameters = typing_inspect.get_parameters(cls)
+    arguments_tuple = typing_inspect.get_args(cls, evaluate=True)
+
+    if arguments_tuple is None:
+        arguments = []
+    else:
+        arguments = list(arguments_tuple)
+
+    active_arguments = parent_arguments + arguments
+
+    if len(active_arguments) < len(parameters):
+        active_arguments += [typing.Any] * (len(parameters) - len(active_arguments))
+
+    # Using typing.TypeVar in type signature does not really work, so we are using type instead.
+    # See: https://github.com/python/typing/issues/520
+    result: typing.Dict[type, typing.Tuple[type, int]] = {}
+    for parameter, argument in zip(parameters, active_arguments):
+        if type_util.resolve_fw_decl(argument, module_name=cls.__module__, globs=dir(sys.modules[cls.__module__]))[1]:
+            argument = argument.__forward_value__
+
+        if parameter == argument:
+            continue
+
+        result[parameter] = (argument, depth)
+
+    # See: https://github.com/ilevkivskyi/typing_inspect/issues/36
+    for base_class in list(type_util._bases(cls)):
+        # _Generic_Singleton is among bases only in Python 3.7.
+        if base_class == getattr(type_util, '_Generic_Singleton', None):
+            continue
+
+        base_results = _get_type_arguments(base_class, arguments, depth + 1)
+
+        for parameter, (argument, base_depth) in base_results.items():
+            if parameter in result:
+                existing_argument, existing_depth = result[parameter]
+                if existing_depth > base_depth:
+                    # We override it with the new type.
+                    result[parameter] = (argument, base_depth)
+                elif existing_depth < base_depth:
+                    # We just keep the existing type.
+                    pass
+                elif existing_argument != argument:
+                    # At the same depth types has to match.
+                    raise TypeError("Different types for same parameter across class bases: {type1} vs. {type2}".format(
+                        type1=existing_argument,
+                        type2=argument,
+                    ))
+            else:
+                result[parameter] = (argument, base_depth)
+
+    return result
+
+
+def is_instance(obj: typing.Any, cls: typing.Union[type, typing.Tuple[type, ...]]) -> bool:
     # We do not want really to check generators. A workaround.
     # See: https://github.com/Stewori/pytypes/issues/49
     if isinstance(obj, types.GeneratorType):
         return False
+
+    obj_class = type_util.deep_type(obj)
+    try:
+        # Try a quick path. Also addresses: https://github.com/Stewori/pytypes/issues/103
+        if issubclass(obj_class, cls):
+            return True
+    except TypeError:
+        pass
 
     if isinstance(cls, tuple):
         cls = typing.Union[cls]  # type: ignore
@@ -180,23 +216,25 @@ def is_instance(obj: typing.Any, cls: typing.Union[type, typing.Tuple[type]]) ->
     # "bound_typevars" argument has to be passed for this function to
     # correctly work with type variables.
     # See: https://github.com/Stewori/pytypes/issues/24
-    return type_util._issubclass(type_util.deep_type(obj), cls, bound_typevars={})
+    return type_util._issubclass(obj_class, cls, bound_typevars={})
 
 
-def is_subclass(subclass: type, superclass: typing.Union[type, typing.Tuple[type]]) -> bool:
+def is_subclass(subclass: type, superclass: typing.Union[type, typing.Tuple[type, ...]]) -> bool:
+
+    try:
+        # Try a quick path. Also addresses: https://github.com/Stewori/pytypes/issues/103
+        if issubclass(subclass, superclass):
+            return True
+    except TypeError:
+        pass
+
+    if isinstance(superclass, tuple):
+        superclass = typing.Union[superclass]  # type: ignore
+
     # "bound_typevars" argument has to be passed for this function to
     # correctly work with type variables.
     # See: https://github.com/Stewori/pytypes/issues/24
     return type_util._issubclass(subclass, superclass, bound_typevars={})
-
-
-def get_type(obj: typing.Any) -> type:
-    typ = type_util.deep_type(obj, depth=1)
-
-    if is_subclass(typ, type_util.Empty):
-        typ = typing_inspect.get_last_args(typ)[0]
-
-    return typ
 
 
 def is_instance_method_on_class(method: typing.Any) -> bool:
@@ -237,7 +275,7 @@ def is_class_method_on_object(method: typing.Any, object: typing.Any) -> bool:
 
 
 def is_type(obj: typing.Any) -> bool:
-    return isinstance(obj, type) or obj is typing.Any or typing_inspect.is_tuple_type(obj) or typing_inspect.is_union_type(obj)
+    return isinstance(obj, type) or isinstance(obj, TYPING_GENERIC_ALIAS) or obj is typing.Any or typing_inspect.is_tuple_type(obj) or typing_inspect.is_union_type(obj)
 
 
 def type_to_str(obj: type) -> str:
@@ -298,8 +336,8 @@ def yaml_add_representer(value_type: typing.Type, represented: typing.Callable) 
     yaml.SafeDumper.add_representer(value_type, represented)
 
     if yaml.__with_libyaml__:
-        yaml.CDumper.add_representer(value_type, represented)  # type: ignore
-        yaml.CSafeDumper.add_representer(value_type, represented)  # type: ignore
+        yaml.CDumper.add_representer(value_type, represented)
+        yaml.CSafeDumper.add_representer(value_type, represented)
 
 
 class EnumMeta(enum.EnumMeta):
@@ -341,7 +379,7 @@ class Enum(enum.Enum, metaclass=EnumMeta):
         return hash(self.name)
 
     @classmethod
-    def register_value(cls, name: str, value: typing.Any) -> typing.Any:
+    def register_value(cls, name: str, value: typing.Any) -> None:
         # This code is based on Python's "EnumMeta.__new__" code, see
         # comments there for more information about the code.
         # It uses internals of Python's Enum so it is potentially fragile.
@@ -389,6 +427,26 @@ class Enum(enum.Enum, metaclass=EnumMeta):
             cls._value2member_map_[value] = enum_member  # type: ignore
         except TypeError:
             pass
+
+
+class EnumArgProxy(typing.Iterable[str]):
+    def __init__(self, enum_class: typing.Type[Enum]) -> None:
+        self.enum_class = enum_class
+
+    def __contains__(self, item: typing.Any) -> bool:
+        return item in self.enum_class._member_names_  # type: ignore
+
+    def __iter__(self) -> typing.Iterator[str]:
+        return (name for name in self.enum_class._member_names_)  # type: ignore
+
+    def __len__(self) -> int:
+        return len(self.enum_class)
+
+    def __repr__(self) -> str:
+        return repr(self.enum_class)
+
+    def __str__(self) -> str:
+        return str(self.enum_class)
 
 
 # Return type has to be "Any" because mypy does not support enums generated dynamically
@@ -544,10 +602,14 @@ class AbstractMetaclass(abc.ABCMeta, Metaclass):
     """
 
 
-class GenericMetaclass(typing.GenericMeta, Metaclass):
-    """
-    A metaclass which makes sure docstrings are inherited. For use with generic classes (which are also abstract).
-    """
+# For Python 3.6. In Python 3.7 a special generic metaclass is not necessary anymore.
+if hasattr(typing, 'GenericMeta'):
+    class GenericMetaclass(typing.GenericMeta, Metaclass):  # type: ignore
+        """
+        A metaclass which makes sure docstrings are inherited. For use with generic classes (which are also abstract).
+        """
+else:
+    GenericMetaclass = AbstractMetaclass  # type: ignore
 
 
 class RefResolverNoRemote(validators.RefResolver):
@@ -629,7 +691,7 @@ def load_schema_validators(schemas: typing.Dict, load_validators: typing.Sequenc
 
         validator = Draft7Validator(
             schema=schema_json,
-            resolver=RefResolverNoRemote(schema_json['id'], schema_json, schemas),
+            resolver=RefResolverNoRemote(schema_json['$id'], schema_json, schemas),
             format_checker=draft7_format_checker,
         )
 
@@ -774,7 +836,7 @@ def to_reversible_json_structure(obj: typing.Any) -> typing.Any:
             return {
                 'encoding': 'pickle',
                 'description': str(obj),
-                'value': base64.b64encode(pickle.dumps(obj)).decode('utf8'),
+                'value': base64.b64encode(pickle.dumps(obj, protocol=3)).decode('utf8'),
             }
         else:
             return obj
@@ -790,19 +852,19 @@ def to_reversible_json_structure(obj: typing.Any) -> typing.Any:
 
     # We do not use "is_sequence" because we do not want to convert all sequences,
     # because it can be loosing important information.
-    elif isinstance(obj, (tuple, list)):
+    elif obj_type in [tuple, list]:
         return [to_reversible_json_structure(v) for v in obj]
 
     else:
         return {
             'encoding': 'pickle',
             'description': str(obj),
-            'value': base64.b64encode(pickle.dumps(obj)).decode('utf8'),
+            'value': base64.b64encode(pickle.dumps(obj, protocol=3)).decode('utf8'),
         }
 
 
 def from_reversible_json_structure(obj: typing.Any) -> typing.Any:
-    if is_instance(obj, typing.Union[str, int, float, bool, NONE_TYPE]):
+    if is_instance(obj, (str, int, float, bool, NONE_TYPE)):
         return obj
 
     elif isinstance(obj, typing.Mapping):
@@ -819,7 +881,7 @@ def from_reversible_json_structure(obj: typing.Any) -> typing.Any:
 
     # We do not use "is_sequence" because we do not want to convert all sequences,
     # because it can be loosing important information.
-    elif isinstance(obj, (tuple, list)):
+    elif type(obj) in [tuple, list]:
         return [from_reversible_json_structure(v) for v in obj]
 
     else:
@@ -840,7 +902,7 @@ class StreamToLogger:
     # manager has been entered.
     def _check_recursion(self) -> bool:
         # We start at "2" so that we start from outside of this file.
-        frame = sys._getframe(2)
+        frame: typing.Optional[types.FrameType] = sys._getframe(2)
         line_number = None
         try:
             i = 0
@@ -935,13 +997,13 @@ class StreamToLogger:
         return False
 
     def seek(self, offset: int, whence: int = 0) -> int:
-        raise OSError("Stream is not seekable.")
+        raise io.UnsupportedOperation("Stream is not seekable.")
 
     def tell(self) -> int:
-        raise OSError("Stream is not seekable.")
+        raise io.UnsupportedOperation("Stream is not seekable.")
 
     def truncate(self, size: int = None) -> int:
-        raise OSError("Stream is not seekable.")
+        raise io.UnsupportedOperation("Stream is not seekable.")
 
     def writable(self) -> bool:
         return True
@@ -952,17 +1014,29 @@ class StreamToLogger:
     def readable(self) -> bool:
         return False
 
-    def read(self, n: int = -1) -> typing.AnyStr:
-        raise OSError("Stream is write-only.")
+    def read(self, n: int = -1) -> str:
+        raise io.UnsupportedOperation("Stream is write-only.")
 
-    def readline(self, limit: int = -1) -> typing.AnyStr:
-        raise OSError("Stream is write-only.")
+    def readline(self, limit: int = -1) -> str:
+        raise io.UnsupportedOperation("Stream is write-only.")
 
-    def readlines(self, hint: int = -1) -> typing.List[typing.AnyStr]:
-        raise OSError("Stream is write-only.")
+    def readlines(self, hint: int = -1) -> typing.List[str]:
+        raise io.UnsupportedOperation("Stream is write-only.")
 
     def fileno(self) -> int:
-        raise OSError("Stream does not use a file descriptor.")
+        raise io.UnsupportedOperation("Stream does not use a file descriptor.")
+
+    def __iter__(self) -> 'StreamToLogger':
+        if self.closed:
+            raise ValueError("Stream is closed.")
+
+        return self
+
+    def __next__(self) -> str:
+        line = self.readline()
+        if not line:
+            raise StopIteration
+        return line
 
 
 class redirect_to_logging(contextlib.AbstractContextManager):
@@ -1000,12 +1074,12 @@ class redirect_to_logging(contextlib.AbstractContextManager):
     def __enter__(self) -> logging.Logger:
         self._old_stdouts.append(sys.stdout)
         self._old_stderrs.append(sys.stderr)
-        if self.pass_through:
-            stdout_pass_through = self._old_stdouts[0]
-            stderr_pass_through = self._old_stderrs[0]
-        else:
+        if not self.pass_through:
             stdout_pass_through = None
             stderr_pass_through = None
+        else:
+            stdout_pass_through = self._old_stdouts[0]
+            stderr_pass_through = self._old_stderrs[0]
         sys.stdout = typing.cast(typing.TextIO, StreamToLogger(self.logger, self.stdout_level, stdout_pass_through))
         sys.stderr = typing.cast(typing.TextIO, StreamToLogger(self.logger, self.stdout_level, stderr_pass_through))
         return self.logger
@@ -1115,6 +1189,11 @@ def _decorate_all_methods(modules: typing.Sequence[types.ModuleType], src_obj: t
                     setattr(module, name, decorated_function)
 
 
+# A set of modules (Python paths) for which warnings about randomness should not be made.
+ignore_random_warnings = {
+    'torch.utils.data._utils.worker',
+    'joblib.executor',
+}
 _random_warnings_enabled: typing.List[bool] = []
 _random_sources_patched = False
 
@@ -1135,6 +1214,7 @@ def _random_warning_decorator(modules: typing.Sequence[types.ModuleType], module
                     'function_name': function_name,
                 },
                 stack_info=True,
+                ignore_modules=ignore_random_warnings,
             )
 
         return f(*args, **kwargs)
@@ -1162,9 +1242,9 @@ def _patch_random_sources() -> None:
 
     # For global NumPy random number generator we create a new random state instance first (of our subclass),
     # and copy the state over. This is necessary because original random state instance has read-only methods.
-    old_rand = numpy.random.mtrand._rand
-    numpy.random.mtrand._rand = _RandomState()
-    numpy.random.mtrand._rand.set_state(old_rand.get_state())
+    old_rand = numpy.random.mtrand._rand  # type: ignore
+    numpy.random.mtrand._rand = _RandomState()  # type: ignore
+    numpy.random.mtrand._rand.set_state(old_rand.get_state())  # type: ignore
 
     # We do not issue warning for calling "get_state".
     _decorate_all_methods([numpy.random, numpy.random.mtrand], old_rand, numpy.random.mtrand._rand, _random_warning_decorator, {'get_state'})  # type: ignore
@@ -1179,6 +1259,7 @@ def _patch_random_sources() -> None:
                     logging.WARNING,
                     "Using 'numpy.random.default_rng' without a seed can make execution not reproducible.",
                     stack_info=True,
+                    ignore_modules=ignore_random_warnings,
                 )
 
             return old_default_rng(seed)
@@ -1253,8 +1334,8 @@ def columns_sum(inputs: typing.Any, *, source: typing.Any = None) -> typing.Any:
     # Importing here to prevent import cycle.
     from d3m import container
 
-    if isinstance(inputs, container.DataFrame):  # type: ignore
-        results = container.DataFrame(inputs.agg(['sum']).reset_index(drop=True), generate_metadata=True)  # type: ignore
+    if isinstance(inputs, container.DataFrame):
+        results = container.DataFrame(inputs.agg(['sum']).reset_index(drop=True), generate_metadata=True)
         return results
 
     elif isinstance(inputs, container.ndarray) and len(inputs.shape) == 2:
@@ -1266,18 +1347,16 @@ def columns_sum(inputs: typing.Any, *, source: typing.Any = None) -> typing.Any:
         ))
 
 
-def list_files(base_directory: str) -> typing.Sequence[str]:
+def list_files(base_directory: pathlib.PurePath) -> typing.Sequence[pathlib.PurePath]:
     files = []
 
-    base_directory = base_directory.rstrip(os.path.sep)
-    base_directory_prefix_length = len(base_directory) + 1
     for dirpath, dirnames, filenames in os.walk(base_directory):
-        for filename in filenames:
-            filepath = os.path.join(dirpath, filename)
+        dirpath_path = pathlib.PurePath(dirpath)
 
-            # We do not use "os.path.relpath" because it is to general
-            # and it first try to construct absolute path which is slow.
-            files.append(filepath[base_directory_prefix_length:])
+        for filename in filenames:
+            file_path = dirpath_path / filename
+
+            files.append(file_path.relative_to(base_directory))
 
     # We sort to have a canonical order.
     files = sorted(files)
@@ -1366,7 +1445,7 @@ def is_sequence(value: typing.Any) -> bool:
     return isinstance(value, typing.Sequence) and not isinstance(value, (str, bytes))
 
 
-def get_dict_path(input_dict: typing.Dict, path: typing.Sequence[typing.Any]) -> typing.Any:
+def get_dict_path(input_dict: typing.Mapping, path: typing.Sequence[typing.Any]) -> typing.Any:
     value: typing.Any = input_dict
 
     for segment in path:
@@ -1410,7 +1489,10 @@ def register_yaml_representers() -> None:
     ]
 
     for representer in representers:
-        yaml_add_representer(representer['type'], representer['representer'])
+        yaml_add_representer(
+            typing.cast(typing.Type, representer['type']),
+            typing.cast(typing.Callable, representer['representer']),
+        )
 
 
 # Registers additional regexp for floating point resolver.
@@ -1428,10 +1510,10 @@ def register_yaml_resolvers() -> None:
     yaml.SafeLoader.add_implicit_resolver(tag, regexp, first)
 
     if yaml.__with_libyaml__:
-        yaml.CDumper.add_implicit_resolver(tag, regexp, first)  # type: ignore
-        yaml.CSafeDumper.add_implicit_resolver(tag, regexp, first)  # type: ignore
-        yaml.CLoader.add_implicit_resolver(tag, regexp, first)  # type: ignore
-        yaml.CSafeLoader.add_implicit_resolver(tag, regexp, first)  # type: ignore
+        yaml.CDumper.add_implicit_resolver(tag, regexp, first)
+        yaml.CSafeDumper.add_implicit_resolver(tag, regexp, first)
+        yaml.CLoader.add_implicit_resolver(tag, regexp, first)
+        yaml.CSafeLoader.add_implicit_resolver(tag, regexp, first)
 
 
 def matches_structural_type(source_structural_type: type, target_structural_type: typing.Union[str, type]) -> bool:
@@ -1465,17 +1547,14 @@ class PMap(pyrsistent.PMap):
         else:
             yield from super().iteritems()
 
-    # In Python 3 this is also an iterable.
-    def values(self, *, sort: bool = True, reverse: bool = False) -> typing.Iterable:
-        return self.itervalues(sort=sort, reverse=reverse)
+    def values(self, *, sort: bool = True, reverse: bool = False) -> typing.ValuesView:
+        return typing.cast(typing.ValuesView, self.itervalues(sort=sort, reverse=reverse))
 
-    # In Python 3 this is also an iterable.
-    def keys(self, *, sort: bool = True, reverse: bool = False) -> typing.Iterable:
-        return self.iterkeys(sort=sort, reverse=reverse)
+    def keys(self, *, sort: bool = True, reverse: bool = False) -> typing.AbstractSet:
+        return typing.cast(typing.AbstractSet, self.iterkeys(sort=sort, reverse=reverse))
 
-    # In Python 3 this is also an iterable.
-    def items(self, *, sort: bool = True, reverse: bool = False) -> typing.Iterable:
-        return self.iteritems(sort=sort, reverse=reverse)
+    def items(self, *, sort: bool = True, reverse: bool = False) -> typing.AbstractSet:
+        return typing.cast(typing.AbstractSet, self.iteritems(sort=sort, reverse=reverse))
 
     def evolver(self) -> 'Evolver':
         return Evolver(self)
@@ -1484,25 +1563,25 @@ class PMap(pyrsistent.PMap):
         return pmap, (dict(self),)
 
 
-class Evolver(pyrsistent.PMap._Evolver):
+class Evolver(pyrsistent.PMap._Evolver):  # type: ignore
     def persistent(self) -> PMap:
         if self.is_dirty():
-            self._original_pmap = PMap(self._size, self._buckets_evolver.persistent())
+            self._original_pmap = PMap(self._size, self._buckets_evolver.persistent())  # type: ignore
 
         return self._original_pmap
 
 
 # It is OK to use a mutable default value here because it is never changed in-place.
 def pmap(initial: typing.Mapping = {}, pre_size: int = 0) -> PMap:
-    super_pmap = pyrsistent.pmap(initial, pre_size)
+    super_pmap: pyrsistent.typing.PMap = pyrsistent.pmap(initial, pre_size)
 
-    return PMap(super_pmap._size, super_pmap._buckets)
+    return PMap(super_pmap._size, super_pmap._buckets)  # type: ignore
 
 
 EMPTY_PMAP = pmap()
 
 
-def is_uri(uri: str) -> bool:
+def is_uri(uri: typing.Union[str, pathlib.PurePath]) -> bool:
     """
     Test if a given string is an URI.
 
@@ -1516,6 +1595,13 @@ def is_uri(uri: str) -> bool:
     ``True`` if string is an URI, ``False`` otherwise.
     """
 
+    if isinstance(uri, pathlib.PurePath):
+        return False
+
+    # Windows drive letters are not schemes.
+    if re.match('^[a-zA-Z]:[/\\\\]', uri):
+        return False
+
     try:
         parsed_uri = url_parse.urlparse(uri, allow_fragments=False)
     except Exception:
@@ -1524,39 +1610,84 @@ def is_uri(uri: str) -> bool:
     return parsed_uri.scheme != ''
 
 
-def fix_uri(uri: str, *, allow_relative_path: bool = True) -> str:
+def path_to_uri(path: typing.Union[str, pathlib.PurePath], *, allow_relative_path: bool = True) -> str:
     """
     Make a real file URI from a path.
 
     Parameters
     ----------
-    uri:
-        An input URI.
+    path:
+        An input path.
     allow_relative_path:
         Allow path to be relative?
 
     Returns
     -------
-    A fixed URI.
+    A local file URI.
     """
 
-    if is_uri(uri):
-        return uri
+    if is_uri(path):
+        # We know it is a string.
+        return typing.cast(str, path)
 
-    if not uri.startswith('/') and not allow_relative_path:
-        raise exceptions.InvalidArgumentValueError(f"Path cannot be relative: {uri}")
+    if allow_relative_path:
+        path = os.path.abspath(path)
+    else:
+        path = os.path.normpath(path)
 
-    # Make absolute and normalize at the same time.
-    uri = os.path.abspath(uri)
+    return pathlib.PurePath(path).as_uri()
 
-    return 'file://{uri}'.format(uri=uri)
+
+@deprecate.function(message="use path_to_uri instead")
+def fix_uri(uri: str, *, allow_relative_path: bool = True) -> str:
+    return path_to_uri(uri, allow_relative_path=allow_relative_path)
+
+
+def uri_to_path(uri: typing.Union[str, url_parse.ParseResult]) -> pathlib.PurePath:
+    if not isinstance(uri, url_parse.ParseResult):
+        try:
+            uri = url_parse.urlparse(uri, allow_fragments=False)
+        except Exception as error:
+            raise exceptions.InvalidArgumentValueError(f"Not a valid URI: {uri}") from error
+
+    if uri.scheme != 'file':
+        raise exceptions.InvalidArgumentValueError(f"Not a file URI: {uri}")
+
+    if uri.netloc not in ['', 'localhost']:
+        raise exceptions.InvalidArgumentValueError(f"File URI has invalid netloc: {uri}")
+
+    path = url_parse.unquote(uri.path)
+
+    # Get rid of one more slash before the "C:/" Windows path.
+    if DRIVE_REGEX.match(path):
+        path = path[1:]
+        result_path: pathlib.PurePath = pathlib.PureWindowsPath(path)
+    else:
+        result_path = pathlib.PurePosixPath(path)
+
+    if not result_path.is_absolute():
+        raise exceptions.InvalidArgumentValueError(f"Path cannot be relative: {path}")
+
+    return result_path
+
+
+def is_relative_to(path: pathlib.PurePath, other: pathlib.PurePath) -> bool:
+    # Python 3.9+.
+    if hasattr(path, 'is_relative_to'):
+        return path.is_relative_to(other)  # type: ignore
+
+    try:
+        path.relative_to(other)
+        return True
+    except ValueError:
+        return False
 
 
 def outside_package_context() -> typing.Optional[deprecate.Context]:
-    frame = sys._getframe(1)
+    frame: typing.Optional[types.FrameType] = sys._getframe(1)
     try:
         while frame:
-            if frame.f_code.co_filename == '<stdin>' or os.path.commonpath([PACKAGE_BASE, frame.f_code.co_filename]) != PACKAGE_BASE:
+            if frame.f_code.co_filename == '<stdin>' or not is_relative_to(pathlib.Path(frame.f_code.co_filename).resolve(), PACKAGE_BASE):
                 return deprecate.Context(None, None, frame.f_code.co_filename, frame.f_globals.get('__name__', None), frame.f_lineno)
 
             frame = frame.f_back
@@ -1567,16 +1698,19 @@ def outside_package_context() -> typing.Optional[deprecate.Context]:
     return None
 
 
-already_logged: typing.Set[typing.Tuple[deprecate.Context, deprecate.Context]] = set()
+already_logged: typing.Set[typing.Tuple[typing.Optional[deprecate.Context], typing.Optional[deprecate.Context]]] = set()
 
 
-def log_once(logger: logging.Logger, level: int, msg: str, *args: typing.Any, **kwargs: typing.Any) -> None:
+def log_once(logger: logging.Logger, level: int, msg: str, *args: typing.Any, ignore_modules: typing.Set[str] = None, **kwargs: typing.Any) -> None:
     frame = sys._getframe(1)
     try:
         if not frame:
             function_context = None
         else:
-            function_context = deprecate.Context(str(level), msg, frame.f_code.co_filename, frame.f_globals.get('__name__', None), frame.f_lineno)
+            module = frame.f_globals.get('__name__', None)
+            if ignore_modules is not None and module in ignore_modules:
+                return
+            function_context = deprecate.Context(str(level), msg, frame.f_code.co_filename, module, frame.f_lineno)
     finally:
         del frame
 
@@ -1602,10 +1736,10 @@ class FileType(argparse.FileType):
         if string.endswith('.gz'):
             # "gzip.open" has as a default binary mode,
             # but we want text mode as a default.
-            if 't' not in self._mode and 'b' not in self._mode:  # type: ignore
-                mode = self._mode + 't'  # type: ignore
+            if 't' not in self._mode and 'b' not in self._mode:
+                mode = self._mode + 't'
             else:
-                mode = self._mode  # type: ignore
+                mode = self._mode
 
             try:
                 return gzip.open(string, mode=mode, encoding=self._encoding, errors=self._errors)  # type: ignore
@@ -1615,7 +1749,7 @@ class FileType(argparse.FileType):
 
         handle = super().__call__(string)
 
-        if string == '-' and 'b' in self._mode:  # type: ignore
+        if string == '-' and 'b' in self._mode:
             handle = handle.buffer  # type: ignore
 
         return handle
@@ -1628,7 +1762,7 @@ def open(file: str, mode: str = 'r', buffering: int = -1, encoding: str = None, 
         original_error = error.__context__
 
     # So that we are outside of the except clause.
-    raise original_error
+    raise original_error  # type: ignore
 
 
 def filter_local_location_uris(doc: typing.Dict, *, empty_value: typing.Any = None) -> None:
@@ -1727,7 +1861,8 @@ def json_structure_equals(
 
 @functools.lru_cache()
 def get_datasets_and_problems(
-    datasets_dir: str, handle_score_split: bool = True,
+    datasets_dir: str, handle_score_split: bool = True, *,
+    ignore_duplicate: bool = False,
 ) -> typing.Tuple[typing.Dict[str, str], typing.Dict[str, str]]:
     if datasets_dir is None:
         raise exceptions.InvalidArgumentValueError("Datasets directory has to be provided.")
@@ -1758,13 +1893,14 @@ def get_datasets_and_problems(
                     dataset_id = dataset_id[:-5] + '_SCORE'
 
                 if dataset_id in datasets:
-                    logger.warning(
-                        "Duplicate dataset ID '%(dataset_id)s': '%(old_dataset)s' and '%(dataset)s'", {
-                            'dataset_id': dataset_id,
-                            'dataset': dataset_path,
-                            'old_dataset': datasets[dataset_id],
-                        },
-                    )
+                    if not ignore_duplicate:
+                        logger.warning(
+                            "Duplicate dataset ID '%(dataset_id)s': '%(old_dataset)s' and '%(dataset)s'", {
+                                'dataset_id': dataset_id,
+                                'dataset': dataset_path,
+                                'old_dataset': datasets[dataset_id],
+                            },
+                        )
                 else:
                     datasets[dataset_id] = dataset_path
 
@@ -1802,13 +1938,14 @@ def get_datasets_and_problems(
                     problem_description = json.load(problem_file)
 
                 if problem_id in problem_descriptions and problem_description != problem_description_contents[problem_id]:
-                    logger.warning(
-                        "Duplicate problem ID '%(problem_id)s': '%(old_problem)s' and '%(problem)s'", {
-                            'problem_id': problem_id,
-                            'problem': problem_path,
-                            'old_problem': problem_descriptions[problem_id],
-                        },
-                    )
+                    if not ignore_duplicate:
+                        logger.warning(
+                            "Duplicate problem ID '%(problem_id)s': '%(old_problem)s' and '%(problem)s'", {
+                                'problem_id': problem_id,
+                                'problem': problem_path,
+                                'old_problem': problem_descriptions[problem_id],
+                            },
+                        )
                 else:
                     problem_descriptions[problem_id] = problem_path
                     problem_description_contents[problem_id] = problem_description
@@ -1821,3 +1958,21 @@ def get_datasets_and_problems(
                 )
 
     return datasets, problem_descriptions
+
+
+initial_time = time.time()
+initial_perf_counter = time.perf_counter()
+
+
+def now() -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(initial_time + (time.perf_counter() - initial_perf_counter), datetime.timezone.utc)
+
+
+def ensure_uri_ends_with_slash(uri: str) -> str:
+    """
+    Add slash (/) to the URI if it doesn't end with one.
+    """
+
+    if not uri.endswith('/'):
+        uri += '/'
+    return uri

@@ -1,5 +1,6 @@
 import io
 import unittest
+import collections
 
 import pandas
 import sklearn
@@ -484,11 +485,11 @@ d3mIndex,Class
 d3mIndex,Class
 0,1
 1,1
-2,1
+2,2
 3,1
         """)
 
-        self.assertAlmostEqual(metrics.NormalizeMutualInformationMetric().score(ground_truth_list_1, predictions_list_1), 0.5)
+        self.assertAlmostEqual(metrics.NormalizeMutualInformationMetric().score(ground_truth_list_1, predictions_list_1), 0.3455920299442113)
 
     def test_f1_score(self):
         # MultiTask MultiClass Classification
@@ -1130,7 +1131,7 @@ d3mIndex,relationship,rank
         self.assertAlmostEqual(metrics.HitsAtKMetric(k=3).score(y_true, y_pred), 0.3333333)
 
     def test_custom_metric(self):
-        class FooBar():
+        class FooBar(metrics.Metric):
             def score(self, truth: metrics.Truth, predictions: metrics.Predictions) -> float:
                 return 1.0
 
@@ -1138,8 +1139,52 @@ d3mIndex,relationship,rank
 
         self.assertEqual(problem.PerformanceMetric.FOOBAR.best_value(), 1.0)
         self.assertEqual(problem.PerformanceMetric['FOOBAR'].worst_value(), 0.0)
-        self.assertEqual(problem.PerformanceMetric('FOOBAR').requires_confidence(), False)
+        self.assertEqual(problem.PerformanceMetric('FOOBAR').requires_score(), False)
         self.assertIs(problem.PerformanceMetric.FOOBAR.get_class(), FooBar)
+
+    def test_custom_scoring_metric(self):
+        class CustomMetric(metrics.Metric):
+            # Score function computing the actual score using true labels and predictions
+            # Input arguments "truth" and "predictions" are data frames with "d3mIndex" column aligning the rows in both frames.
+            def score(self, truth: metrics.Truth, predictions: metrics.Predictions) -> float:
+                predictions = self.align(truth, predictions)
+                truth_targets = self.get_target_columns(truth)
+                predictions_targets = self.get_target_columns(predictions)
+                # Customized scoring to be done here!
+                import sklearn
+                return sklearn.metrics.accuracy_score(truth_targets, predictions_targets)
+
+        # Registering "CustomMetric" with the d3m core package
+        problem.PerformanceMetric.register_metric('CUSTOM_METRIC', best_value=1.0, worst_value=0.0, score_class=CustomMetric)
+        y_true = self._read_csv("""
+d3mIndex,species
+2,versicolor
+16,virginica
+17,setosa
+22,versicolor
+30,versicolor
+31,virginica
+26,versicolor
+33,versicolor
+1,versicolor
+37,virginica
+        """)
+
+        y_pred = self._read_csv("""
+d3mIndex,species
+1,setosa
+2,versicolor
+22,versicolor
+26,virginica
+30,versicolor
+31,virginica
+33,versicolor
+17,setosa
+37,virginica
+16,virginica
+        """)
+        new_metric = CustomMetric()
+        self.assertAlmostEqual(new_metric.score(y_true, y_pred), 0.8)
 
     def test_roc_auc(self):
         # Binary Classification Test
@@ -1255,6 +1300,54 @@ d3mIndex,value,confidence
 7,e,0
         """)
         self.assertAlmostEqual(metrics.RocAucMacroMetric().score(y_true, y_pred), 0.5)
+
+    def test_vectorize_columns(self):
+        # Test Metrics.vectorize_columns.
+        df = self._read_csv("""
+d3mIndex,col0,col1
+0,1,x
+1,2,y
+2,4,z
+3,5,
+4,,
+0,2,
+2,1,b
+1,,c
+1,4,d
+4,,
+3,8,
+        """)
+        vdf = metrics.Metric.vectorize_columns(df)
+        # 1. Check that there are only three distinct keys.
+        self.assertEqual(vdf.shape[0], 5)
+        # 2. Check that each value is a sequence. If it is permissible for the
+        #    values to be something that is not a collections.Sequence, remove
+        #    this test. The current implementation returns tuples for each
+        #    vectorized value.
+        self.assertTrue(all(isinstance(x, collections.Sequence)
+                            for c in ('col0', 'col1') for x in vdf[c]))
+        # 3. Check vectorize results.
+        self.assertSequenceEqual(vdf.col0[0], ('1', '2'))
+        self.assertSequenceEqual(vdf.col0[1], ('2', '4'))
+        self.assertSequenceEqual(vdf.col0[2], ('4', '1'))
+        self.assertSequenceEqual(vdf.col0[3], ('5', '8'))
+        self.assertSequenceEqual(vdf.col0[4], ())
+        self.assertSequenceEqual(vdf.col1[0], ('x',))
+        self.assertSequenceEqual(vdf.col1[1], ('y', 'c', 'd'))
+        self.assertSequenceEqual(vdf.col1[2], ('z', 'b'))
+        self.assertSequenceEqual(vdf.col1[3], ())
+        self.assertSequenceEqual(vdf.col1[4], ())
+        # 4. Check preservation of row order with a few shuffles.
+        for i in range(100):
+            df.sample(frac=1, random_state=12341).reset_index()
+            vdf = metrics.Metric.vectorize_columns(df)
+            r1c0 = vdf[vdf.d3mIndex == '1'].iloc[0].col0
+            # Get the original row index of row1.col0[0]
+            r1c0_idx_orig_0 = df[(df.d3mIndex == '1') & (df.col0 == r1c0[0])].index[0]
+            # Get the original row index of row1.col0[1]
+            r1c0_idx_orig_1 = df[(df.d3mIndex == '1') & (df.col0 == r1c0[1])].index[0]
+            # Ensure order in the original table.
+            self.assertTrue(r1c0_idx_orig_0 < r1c0_idx_orig_1)
 
 
 if __name__ == '__main__':

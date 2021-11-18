@@ -1,6 +1,5 @@
-{
-  "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/definitions.json",
+{"$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/definitions.json",
   "definitions": {
     "id": {
       "type": "string",
@@ -1553,6 +1552,9 @@
       ],
       "additionalProperties": true
     },
+    "spatial_reference_system": {
+      "type": "string"
+    },
     "stored_size": {
       "type": "integer",
       "description": "Size in bytes when or if stored to disk."
@@ -1598,8 +1600,9 @@
           {"enum": ["https://metadata.datadrivendiscovery.org/types/Target"], "description": "Value serves as a target variable for a problem.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/PredictedTarget"], "description": "Value serves as a predict target variable for a problem. This is set by primitives when predicting targets.", "parents": ["https://metadata.datadrivendiscovery.org/types/Target"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/TrueTarget"], "description": "Value serves as a true target variable for a problem. This is set by a runtime based on problem description.", "parents": ["https://metadata.datadrivendiscovery.org/types/Target"]},
-          {"enum": ["https://metadata.datadrivendiscovery.org/types/Score"], "description": "Value is a prediction score computed by comparing predicted and true target.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
-          {"enum": ["https://metadata.datadrivendiscovery.org/types/Confidence"], "description": "Value serves as a confidence of a predicted target variable. \"confidence_for\" metadata can be used to reference for which target column(s) this column is confidence for.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
+          {"enum": ["https://metadata.datadrivendiscovery.org/types/Score"], "description": "Value serves as a score of a predicted target variable. \"score_for\" metadata can be used to reference for which target column(s) this column is score for.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
+          {"enum": ["https://metadata.datadrivendiscovery.org/types/Likelihood"], "description": "Value serves as a likelihood of a predicted target variable. \"score_for\" metadata can be used to reference for which target column(s) this column is likelihood for.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
+          {"enum": ["https://metadata.datadrivendiscovery.org/types/LogLikelihood"], "description": "Value serves as a log likelihood of a predicted target variable. \"score_for\" metadata can be used to reference for which target column(s) this column is log likelihood for.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/Rank"], "description": "Value serves as a rank of a predicted target variable. \"rank_for\" metadata can be used to reference for which target column(s) this column is rank for.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/SuggestedPrivilegedData"], "description": "Value serves as a potential privileged (available during fitting but not producing) attribute.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/RedactedPrivilegedData"], "description": "Value is redacted, but would otherwise be a privileged attribute.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
@@ -1621,7 +1624,10 @@
           {"enum": ["https://metadata.datadrivendiscovery.org/types/IntervalStart"], "description": "Value represents a start of an interval.", "parents": ["https://metadata.datadrivendiscovery.org/types/Boundary"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/IntervalEnd"], "description": "Value represents an end of an interval.", "parents": ["https://metadata.datadrivendiscovery.org/types/Boundary"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/BoundingPolygon"], "description": "Value represents a bounding polygon as a series of (X, Y) coordinate pairs of vertices in counter-clockwise order.", "parents": ["https://metadata.datadrivendiscovery.org/types/Boundary"]},
+          {"enum": ["https://metadata.datadrivendiscovery.org/types/LocationPolygon"], "description": "Value represents a location polygon whose vertices are geo coordinates in the spatial reference system used. Used in remote sensing datasets. The number of elements is determined by the standards of the spatial reference system used. The order is not specified and should be inferred.", "parents": ["https://metadata.datadrivendiscovery.org/types/Location"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/InstanceWeight"], "description": "Value serves as a weight for an instance.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
+          {"enum": ["https://metadata.datadrivendiscovery.org/types/BagKey"], "description": "Value is a bag identifier for multiple instance learning problem type.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
+          {"enum": ["https://metadata.datadrivendiscovery.org/types/Band"], "description": "Multi-spectral images can have each band image as a separate instance and this value identifies the image band of the instance.", "parents": ["https://metadata.datadrivendiscovery.org/types/ColumnRole"]},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/UnknownType"], "description": "It is not known what the value represents."},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/FileName"], "description": "Value is a filename."},
           {"enum": ["https://metadata.datadrivendiscovery.org/types/DimensionType"], "description": "Value represents a dimension."},
@@ -1915,9 +1921,9 @@
         }
       ]
     },
-    "confidence_for": {
+    "score_for": {
       "type": "object",
-      "description": "A column in a table can be a confidence for other columns in the same table or a table in another dataset resource.",
+      "description": "A column in a table can be a score for other columns in the same table or a table in another dataset resource.",
       "oneOf": [
         {
           "properties": {
@@ -2000,32 +2006,6 @@
       "description": "Algorithm type describes the underlying implementation of the primitive. It uses controlled, standardized, but open vocabulary which means that if types which would best describe your primitive are missing, please feel encouraged to open a merge request adding them.",
       "items": {
         "oneOf": [
-          {"enum": ["RULE_BASED_FILTER"]},
-
-          {"enum": ["DUPLICATION_VALIDATION"]},
-          {"enum": ["CONTINUITY_VALIDATION"]},
-          {"enum": ["HP_FILTER"], "description": "https://en.wikipedia.org/wiki/Hodrick–Prescott_filter"},
-          {"enum": ["BK_FILTER"]},
-          {"enum": ["TEMPORAL_REGULARIZED_MATRIX_FACTORIZATION"]},
-          {"enum": ["ANGLE_BASE_OUTLIER_DETECTION"]},
-          {"enum": ["HISTOGRAM_BASED_OUTLIER_DETECTION"]},
-          {"enum": ["ISOLATION_FOREST"]},
-          {"enum": ["SUBSPACE_OUTLIER_DETECTION"]},
-          {"enum": ["AUTOCORRELATION"], "description": "https://en.wikipedia.org/wiki/Autocorrelation"},
-          {"enum": ["CATEGORICAL_TO_BINARY"]},
-          {"enum": ["DISCRETE_COSINE_TRANSFORM"], "description": "https://en.wikipedia.org/wiki/Discrete_cosine_transform"},
-          {"enum": ["FAST_FOURIER_TRANSFORM"], "description": "https://en.wikipedia.org/wiki/Fast_Fourier_transform"},
-          {"enum": ["HOLT_SMOOTHING"], "description": "https://medium.com/datadriveninvestor/how-to-build-exponential-smoothing-models-using-python-simple-exponential-smoothing-holt-and-da371189e1a1"},
-          {"enum": ["HOLT_WINTERS_EXPONENTIAL_SMOOTHING"], "description": "https://medium.com/datadriveninvestor/how-to-build-exponential-smoothing-models-using-python-simple-exponential-smoothing-holt-and-da371189e1a1"},
-          {"enum": ["MATRIX_PROFILE"], "description": "https://en.wikipedia.org/wiki/Matrix_profile"},
-          {"enum": ["MEAN_AVERAGE_TRANSFORM"], "description": "https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.rolling.html"},
-          {"enum": ["MOVING_AVERAGE_TRANSFORM"], "description": "https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.rolling.html"},
-          {"enum": ["NON_NEGATIVE_MATRIX_FACTORIZATION"], "description":"https://en.wikipedia.org/wiki/Non-negative_matrix_factorization"},
-          {"enum": ["PYOD_COF"]},
-          {"enum": ["SIMPLE_EXPONENTIAL_SMOOTHING"], "description": "https://medium.com/datadriveninvestor/how-to-build-exponential-smoothing-models-using-python-simple-exponential-smoothing-holt-and-da371189e1a1"},
-	  	  {"enum": ["SUM_CODING"]},
-          {"enum": ["TIME_INTERVAL_TRANSFORM"], "description": "https://en.wikipedia.org/wiki/Time_interval_transform"},
-          {"enum": ["VARIATIONAL_AUTO_ENCODER"],"description":"https://www.jeremyjordan.me/variational-autoencoders/"},
           {"enum": ["ACCURACY_SCORE"], "description": "https://en.wikipedia.org/wiki/Accuracy_and_precision"},
           {"enum": ["ADABOOST"], "description": "https://en.wikipedia.org/wiki/AdaBoost"},
           {"enum": ["ADAPTIVE_ALGORITHM"], "description": "https://en.wikipedia.org/wiki/Adaptive_algorithm"},
@@ -2046,6 +2026,7 @@
           {"enum": ["AUTOENCODER"], "description": "https://en.wikipedia.org/wiki/Autoencoder"},
           {"enum": ["AUTOREGRESSIVE_INTEGRATED_MOVING_AVERAGE"], "description": "https://en.wikipedia.org/wiki/Autoregressive_integrated_moving_average"},
           {"enum": ["BACKWARD_DIFFERENCE_CODING"], "description": "https://stats.idre.ucla.edu/r/library/r-library-contrast-coding-systems-for-categorical-variables/#backward"},
+          {"enum": ["BAG_OF_TRICKS"], "description": "https://wiki.math.uwaterloo.ca/statwiki/index.php?title=Bag_of_Tricks_for_Efficient_Text_Classification#N-Gram.2C_Bag_of_Words.2C_and_TFIDF"},
           {"enum": ["BAG_OF_WORDS_MODEL"], "description": "https://en.wikipedia.org/wiki/Bag-of-words_model"},
           {"enum": ["BATCH_NORMALIZATION"]},
           {"enum": ["BAYESIAN_LINEAR_REGRESSION"], "description": "https://en.wikipedia.org/wiki/Bayesian_linear_regression"},
@@ -2076,7 +2057,6 @@
           {"enum": ["CN2"], "description": "https://en.wikipedia.org/wiki/CN2_algorithm"},
           {"enum": ["COBWEB"], "description": "https://en.wikipedia.org/wiki/Cobweb_(clustering)"},
           {"enum": ["COEFFICIENT_OF_DETERMINATION"], "description": "https://en.wikipedia.org/wiki/Coefficient_of_determination"},
-		  {"enum":["COLUMN_FILTER"], "description": "https://en.wikipedia.org/wiki/Column_filter"},
           {"enum": ["COLOR_SPACE_CONVERSION"], "description": "https://en.wikipedia.org/wiki/Color_space"},
           {"enum": ["COMMITTEE_MACHINE"], "description": "https://en.wikipedia.org/wiki/Committee_machine"},
           {"enum": ["COMPOSITIONAL_PATTERN_PRODUCING_NETWORK"], "description": "https://en.wikipedia.org/wiki/Compositional_pattern-producing_network"},
@@ -2108,7 +2088,6 @@
           {"enum": ["DECISION_TREE"], "description": "https://en.wikipedia.org/wiki/Decision_tree"},
           {"enum": ["DEEP_BELIEF_NETWORK"], "description": "https://en.wikipedia.org/wiki/Deep_belief_network"},
           {"enum": ["DEEP_FEATURE_SYNTHESIS"], "description": "https://groups.csail.mit.edu/EVO-DesignOpt/groupWebSite/uploads/Site/DSAA_DSM_2015.pdf"},
-		  {"enum": ["DEEPLOG"], "description": "https://en.wikipedia.org/wiki/Deeplog"},
           {"enum": ["DEEP_NEURAL_NETWORK"], "description": "https://en.wikipedia.org/wiki/Deep_learning#Deep_neural_networks"},
           {"enum": ["DEINTERLACING"], "description": "https://en.wikipedia.org/wiki/Deinterlacing"},
           {"enum": ["DENSE_NEURAL_NETWORK_LAYER"]},
@@ -2374,11 +2353,10 @@
           {"enum": ["SUPPORT_VECTOR_MACHINE"], "description": "https://en.wikipedia.org/wiki/Support_vector_machine"},
           {"enum": ["SYMBOLIC_REGRESSION"], "description": "https://en.wikipedia.org/wiki/Symbolic_regression"},
           {"enum": ["T_DISTRIBUTED_STOCHASTIC_NEIGHBOR_EMBEDDING"], "description": "https://en.wikipedia.org/wiki/T-distributed_stochastic_neighbor_embedding"},
-		  {"enum": ["TELEMANOM"]},
-		  {"enum": ["TODS_PRIMITIVE"]},
           {"enum": ["TFIDF"], "description": "https://en.wikipedia.org/wiki/Tf-idf"},
           {"enum": ["TIKHONOV_REGULARIZATION"], "description": "https://en.wikipedia.org/wiki/Tikhonov_regularization"},
           {"enum": ["TIME_DELAY_NEURAL_NETWORK"], "description": "https://en.wikipedia.org/wiki/Time_delay_neural_network"},
+		  {"enum": ["TODS_PRIMITIVE"], "description": "TODS primitive"},
           {"enum": ["TRUNCATED_NEWTON_METHOD"], "description": "https://en.wikipedia.org/wiki/Truncated_Newton_method"},
           {"enum": ["TRUNCATED_NORMAL_DISTRIBUTION"], "description": "https://en.wikipedia.org/wiki/Truncated_normal_distribution"},
           {"enum": ["UNIFORM_DISTRIBUTION"], "description": "https://en.wikipedia.org/wiki/Uniform_distribution_(continuous)"},
@@ -2404,8 +2382,7 @@
     "primitive_family": {
       "description": "Primitive family describes the high-level purpose/nature of the primitive. Only one value per primitive is possible. Consider splitting a primitive into multiple primitives if this represents a problem for you.",
       "oneOf": [
-        {"enum": ["REINFORCEMENT"], "description": "Reinforcement Module"},
-        {"enum": ["ANOMALY_DETECTION"], "description": "TODS algorithms"},
+		{"enum": ["ANOMALY_DETECTION"], "description": "TODS detection algorithms"},
         {"enum": ["CLASSIFICATION"], "description": "https://en.wikipedia.org/wiki/Statistical_classification"},
         {"enum": ["CLUSTERING"], "description": "https://en.wikipedia.org/wiki/Cluster_analysis"},
         {"enum": ["COLLABORATIVE_FILTERING"], "description": "https://en.wikipedia.org/wiki/Collaborative_filtering"},
@@ -2417,7 +2394,6 @@
         {"enum": ["DATA_PREPROCESSING"], "description": "https://en.wikipedia.org/wiki/Data_pre-processing"},
         {"enum": ["DATA_TRANSFORMATION"], "description": "https://en.wikipedia.org/wiki/Data_transformation"},
         {"enum": ["DATA_VALIDATION"], "description": "https://en.wikipedia.org/wiki/Data_validation"},
-        {"enum": ["DATA_WRANGLING"], "description": "https://en.wikipedia.org/wiki/Data_wrangling"},
         {"enum": ["DIGITAL_IMAGE_PROCESSING"], "description": "https://en.wikipedia.org/wiki/Digital_image_processing"},
         {"enum": ["DIGITAL_SIGNAL_PROCESSING"], "description": "https://en.wikipedia.org/wiki/Digital_signal_processing"},
         {"enum": ["DIMENSIONALITY_REDUCTION"], "description": "https://en.wikipedia.org/wiki/Dimensionality_reduction"},
@@ -2590,7 +2566,6 @@
           "description": "Keywords describing the task.",
           "items": {
             "oneOf": [
-              {"enum": ["ANOMALY_DETECTION"]},
               {"enum": ["CLASSIFICATION"], "description": "https://en.wikipedia.org/wiki/Statistical_classification"},
               {"enum": ["REGRESSION"], "description": "https://en.wikipedia.org/wiki/Regression_analysis"},
               {"enum": ["CLUSTERING"], "description": "https://en.wikipedia.org/wiki/Cluster_analysis"},
@@ -2625,7 +2600,8 @@
               {"enum": ["GEOSPATIAL"]},
               {"enum": ["REMOTE_SENSING"], "description":  "https://en.wikipedia.org/wiki/Remote_sensing"},
               {"enum": ["LUPI"]},
-              {"enum": ["MISSING_METADATA"]}
+              {"enum": ["MISSING_METADATA"]},
+              {"enum": ["MULTIPLE_INSTANCE_LEARNING"]}
             ]
           },
           "minItems": 1
@@ -2948,6 +2924,9 @@
             },
             {
               "$ref": "#/definitions/data_argument"
+            },
+            {
+              "$ref": "#/definitions/value_argument"
             }
           ]
         }
@@ -3244,6 +3223,9 @@
           },
           "time_granularity" : {
             "$ref": "#/definitions/time_granularity"
+          },
+          "spatial_reference_system" : {
+            "$ref": "#/definitions/spatial_reference_system"
           }
         },
         "required": [

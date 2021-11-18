@@ -29,7 +29,7 @@ class TestParams(unittest.TestCase):
         self.assertEqual(test_params['b'], 10)
 
         with self.assertRaisesRegex(TypeError, 'Value \'.*\' is not an instance of the type'):
-            TestParams({'a': 'foo', 'b': 10.1})
+            TestParams({'a': 'foo', 'b': 10.1}).validate()
 
         with self.assertRaisesRegex(TypeError, 'Only methods and attribute type annotations can be defined on Params class'):
             class ErrorParams(params.Params):

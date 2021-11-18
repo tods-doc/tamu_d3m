@@ -1,21 +1,16 @@
 import copy as copy_module
 import datetime
 import logging
+import pathlib
 import typing
 
-import numpy  # type: ignore
-import pandas  # type: ignore
-from pandas.core.dtypes import common as pandas_common  # type: ignore
+import numpy
+import pandas
+from pandas.core.dtypes import common as pandas_common
 
 from . import list as container_list
 from d3m import deprecate, exceptions
 from d3m.metadata import base as metadata_base
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = ('DataFrame',)
 
@@ -85,16 +80,12 @@ class DataFrame(pandas.DataFrame):
         DEPRECATED: argument ignored.
     timestamp:
         DEPRECATED: argument ignored.
-
-    Attributes
-    ----------
-    metadata:
-        Metadata associated with the data frame.
     """
 
+    #: Metadata associated with the data frame.
     metadata: metadata_base.DataMetadata
 
-    # Reversed properties.
+    # Reserved properties.
     _metadata = ['metadata']
 
     @property
@@ -113,7 +104,7 @@ class DataFrame(pandas.DataFrame):
         # Importing here to prevent import cycle.
         from d3m import types
 
-        if isinstance(data, types.Container):  # type: ignore
+        if isinstance(data, types.Container):
             if isinstance(data, DataFrame):
                 # We made a copy, so we do not have to generate metadata.
                 self.metadata: metadata_base.DataMetadata = data.metadata
@@ -163,7 +154,7 @@ class DataFrame(pandas.DataFrame):
 
         self.metadata = state['metadata']
 
-    def to_csv(self, path_or_buf: typing.Union[typing.IO[typing.Any], str] = None, sep: str = ',', na_rep: str = '',
+    def to_csv(self, path_or_buf: typing.Union[typing.IO[typing.Any], str, pathlib.Path] = None, sep: str = ',', na_rep: str = '',
                float_format: str = None, columns: typing.Sequence = None, header: typing.Union[bool, typing.Sequence[str]] = True,
                index: bool = False, **kwargs: typing.Any) -> typing.Optional[str]:
         """
@@ -201,6 +192,9 @@ class DataFrame(pandas.DataFrame):
                 # We use column name from the DataFrame if metadata does not have it. This allows a bit more compatibility.
                 header.append(self.metadata.query_column(column_index).get('name', self.columns[column_index]))
 
+        if 'line_terminator' not in kwargs:
+            kwargs['line_terminator'] = '\n'
+
         result = super().to_csv(path_or_buf=path_or_buf, sep=sep, na_rep=na_rep, float_format=float_format, columns=columns, header=header, index=index, **kwargs)
 
         # Make sure handles are flushed so that no data is lost when used with CLI file handles.
@@ -234,7 +228,7 @@ class DataFrame(pandas.DataFrame):
         if output._is_view:
             output = output.copy()
         else:
-            output._set_is_copy(copy=False)
+            output._set_is_copy(ref=None, copy=False)
 
         output.metadata = self.metadata.select_columns(columns, allow_empty_columns=allow_empty_columns)
 
@@ -267,7 +261,7 @@ class DataFrame(pandas.DataFrame):
         if output._is_view:
             output = output.copy()
         else:
-            output._set_is_copy(copy=False)
+            output._set_is_copy(ref=None, copy=False)
 
         output.metadata = self.metadata.select_columns(columns)
 
@@ -470,6 +464,10 @@ class DataFrame(pandas.DataFrame):
 
 
 def dataframe_serializer(obj: DataFrame) -> dict:
+    """
+    Serializer to be used with PyArrow.
+    """
+
     data = {
         'metadata': obj.metadata,
         'pandas': pandas.DataFrame(obj),
@@ -482,14 +480,10 @@ def dataframe_serializer(obj: DataFrame) -> dict:
 
 
 def dataframe_deserializer(data: dict) -> DataFrame:
+    """
+    Deserializer to be used with PyArrow.
+    """
+
     df = data.get('type', DataFrame)(data['pandas'])
     df.metadata = data['metadata']
     return df
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        DataFrame, 'd3m.dataframe',
-        custom_serializer=dataframe_serializer,
-        custom_deserializer=dataframe_deserializer,
-    )

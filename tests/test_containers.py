@@ -293,7 +293,7 @@ class TestContainers(unittest.TestCase):
             },
         }])
 
-        array = container.ndarray(l, generate_metadata=True)
+        array = container.ndarray(l, dtype=numpy.int64, generate_metadata=True)
 
         self.assertEqual(utils.to_json_structure(array.metadata.to_internal_simple_structure()), [{
             'selector': [],
@@ -335,7 +335,7 @@ class TestContainers(unittest.TestCase):
         # With custom metadata which should be preserved.
         df = container.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6], 'C': [7, 8, 9]}, {
             'foo': 'bar',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
 
         df.metadata = df.metadata.generate(df, compact=False)
 
@@ -484,7 +484,7 @@ class TestContainers(unittest.TestCase):
         # With custom metadata which should be preserved.
         df = container.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6], 'C': [7, 8, 9]}, {
             'foo': 'bar',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
 
         df.metadata = df.metadata.generate(df, compact=True)
 
@@ -632,7 +632,7 @@ class TestContainers(unittest.TestCase):
         # With custom metadata which should be preserved.
         df = container.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6], 'C': [7, 8, 9]}, {
             'foo': 'bar',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
 
         df.metadata = df.metadata.generate(df, compact=True)
 
@@ -784,7 +784,7 @@ class TestContainers(unittest.TestCase):
         # With custom metadata which should be preserved.
         df = container.DataFrame({'A': [1, 2, 3], 'B': [4, 5, 6], 'C': [7, 8, 9]}, {
             'foo': 'bar',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
 
         df.metadata = df.metadata.generate(df, compact=False)
 
@@ -934,8 +934,10 @@ class TestContainers(unittest.TestCase):
         }])
 
     def test_deep_ndarray_compact_metadata(self):
+        self.maxDiff = None
+
         # With custom metadata which should be preserved.
-        array = container.ndarray(numpy.arange(3 * 4 * 5 * 5 * 5).reshape((3, 4, 5, 5, 5)), {
+        array = container.ndarray(numpy.arange(3 * 4 * 5 * 5 * 5, dtype=numpy.int64).reshape((3, 4, 5, 5, 5)), {
             'foo': 'bar',
         }, generate_metadata=False)
         array.metadata = array.metadata.generate(array, compact=True)
@@ -1096,8 +1098,10 @@ class TestContainers(unittest.TestCase):
         }])
 
     def test_deep_ndarray_noncompact_metadata(self):
+        self.maxDiff = None
+
         # With custom metadata which should be preserved.
-        array = container.ndarray(numpy.arange(3 * 4 * 5 * 5 * 5).reshape((3, 4, 5, 5, 5)), {
+        array = container.ndarray(numpy.arange(3 * 4 * 5 * 5 * 5, dtype=numpy.int64).reshape((3, 4, 5, 5, 5)), {
             'foo': 'bar',
         }, generate_metadata=False)
         array.metadata = array.metadata.generate(array, compact=False)
@@ -1367,7 +1371,7 @@ class TestContainers(unittest.TestCase):
     def test_simple_list_to_dataframe(self):
         data = container.List([1, 2, 3], generate_metadata=True)
 
-        dataframe = container.DataFrame(data, generate_metadata=False)
+        dataframe = container.DataFrame(data, dtype=numpy.int64, generate_metadata=False)
 
         compact_metadata = dataframe.metadata.generate(dataframe, compact=True)
         noncompact_metadata = dataframe.metadata.generate(dataframe, compact=False)
@@ -1408,7 +1412,7 @@ class TestContainers(unittest.TestCase):
         self.assertEqual(utils.to_json_structure(noncompact_metadata.to_internal_simple_structure()), expected_metadata)
 
     def test_select_columns_compact_metadata(self):
-        data = container.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [7, 8, 9]}, generate_metadata=False)
+        data = container.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [7, 8, 9]}, dtype=numpy.int64, generate_metadata=False)
 
         data.metadata = data.metadata.generate(data, compact=True)
 
@@ -1519,7 +1523,7 @@ class TestContainers(unittest.TestCase):
         self.assertEqual(data.metadata.to_internal_json_structure(), data_metadata_before)
 
     def test_select_columns_noncompact_metadata(self):
-        data = container.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [7, 8, 9]}, generate_metadata=False)
+        data = container.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [7, 8, 9]}, dtype=numpy.int64, generate_metadata=False)
 
         data.metadata = data.metadata.generate(data, compact=False)
 
@@ -1626,7 +1630,7 @@ class TestContainers(unittest.TestCase):
     def test_append_columns_compact_metadata(self):
         left = container.DataFrame({'a1': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9]}, {
             'top_level': 'left',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
         left.metadata = left.metadata.generate(left, compact=True)
 
         left.metadata = left.metadata.update_column(0, {'name': 'aaa111'})
@@ -1813,7 +1817,7 @@ class TestContainers(unittest.TestCase):
     def test_append_columns_noncompact_metadata(self):
         left = container.DataFrame({'a1': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9]}, {
             'top_level': 'left',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
         left.metadata = left.metadata.generate(left, compact=False)
 
         left.metadata = left.metadata.update_column(0, {'name': 'aaa111'})
@@ -1990,7 +1994,7 @@ class TestContainers(unittest.TestCase):
     def test_replace_columns_compact_metadata(self):
         main = container.DataFrame({'a1': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9]}, {
             'top_level': 'main',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
         main.metadata = main.metadata.generate(main, compact=True)
 
         main.metadata = main.metadata.update_column(0, {'name': 'aaa111'})
@@ -2280,7 +2284,7 @@ class TestContainers(unittest.TestCase):
     def test_replace_columns_noncompact_metadata(self):
         main = container.DataFrame({'a1': [1, 2, 3], 'b1': [4, 5, 6], 'c1': [7, 8, 9]}, {
             'top_level': 'main',
-        }, generate_metadata=False)
+        }, dtype=numpy.int64, generate_metadata=False)
         main.metadata = main.metadata.generate(main, compact=False)
 
         main.metadata = main.metadata.update_column(0, {'name': 'aaa111'})
@@ -2549,7 +2553,7 @@ class TestContainers(unittest.TestCase):
         self.assertEqual(columns_metadata_before, columns.metadata.to_internal_json_structure())
 
     def test_select_columns_empty(self):
-        data = container.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [7, 8, 9]}, generate_metadata=True)
+        data = container.DataFrame({'a': [1, 2, 3], 'b': [4, 5, 6], 'c': [7, 8, 9]}, dtype=numpy.int64, generate_metadata=True)
 
         with self.assertRaises(Exception):
             data.select_columns([])

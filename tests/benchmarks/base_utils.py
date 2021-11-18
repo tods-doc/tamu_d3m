@@ -1,7 +1,6 @@
 from d3m import container
 from d3m.base import utils as base_utils
 
-
 class CombineColumns:
     params = [[100, 300, 500, 700, 900]]
     param_names = ['columns']
@@ -27,6 +26,22 @@ class CombineColumns:
             self.large_dataframe_with_many_columns,
             list(range(int(columns / 4), int(columns / 2))),  # Just 1/4 of columns.
             self.list_of_many_dataframe_columns,
+            return_result='replace',
+            add_index_columns=True,
+        )
+
+    def time_replace2(self, columns):
+        cols = 5000
+        large_dataframe_with_many_columns = container.DataFrame({str(i): [j for j in range(5)] for i in range(cols)}, columns=[str(i) for i in range(cols)], generate_metadata=True)
+        list_of_many_dataframe_columns = [
+            container.DataFrame({str(i): [j for j in range(5, 1000)]}, columns=[str(i)], generate_metadata=True)
+            for i in range(int(cols / 2))
+        ]
+
+        base_utils.combine_columns(
+            large_dataframe_with_many_columns,
+            list(range(int(cols))),  # All of the columns.
+            list_of_many_dataframe_columns,
             return_result='replace',
             add_index_columns=True,
         )

@@ -2,7 +2,7 @@ import inspect
 import os.path
 import typing
 
-import pandas  # type: ignore
+import pandas
 
 import d3m
 from d3m import container, exceptions, metrics, utils as d3m_utils
@@ -156,9 +156,9 @@ class ComputeScoresPrimitive(transformer.TransformerPrimitiveBase[Inputs, Output
                     continue
                 params[param_name] = param_value
 
-            if metric.requires_confidence() and metrics.CONFIDENCE_COLUMN not in predictions.columns:
+            if metric.requires_score() and metrics.SCORE_COLUMN not in predictions.columns:
                 raise exceptions.InvalidArgumentValueError(
-                    f"Metric {metric.name} requires confidence column in predictions, but it is not available.",
+                    f"Metric {metric.name} requires score column in predictions, but it is not available.",
                 )
             if metric.requires_rank() and metrics.RANK_COLUMN not in predictions.columns:
                 raise exceptions.InvalidArgumentValueError(
@@ -248,9 +248,9 @@ class ComputeScoresPrimitive(transformer.TransformerPrimitiveBase[Inputs, Output
 
         dataframe = dataframe.iloc[:, indices + targets]
 
-        dataframe = dataframe.rename({dataframe.columns[0]: metrics.INDEX_COLUMN})
+        dataframe = dataframe.rename(columns={dataframe.columns[0]: metrics.INDEX_COLUMN})
 
-        if metrics.CONFIDENCE_COLUMN in dataframe.columns[1:]:
+        if metrics.SCORE_COLUMN in dataframe.columns[1:]:
             raise ValueError("True target column cannot be named \"confidence\". It is a reserved name.")
         if metrics.RANK_COLUMN in dataframe.columns[1:]:
             raise ValueError("True target column cannot be named \"rank\". It is a reserved name.")

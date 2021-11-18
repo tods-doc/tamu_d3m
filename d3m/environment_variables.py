@@ -1,12 +1,12 @@
-# Environment variables describing runtime environment.
-# From inside Docker container it is not really possible to obtain
-# information about the Docker image used for the container. This
-# is why we use environment variable to pass this information in.
-# See descriptions of "base_docker_image" and "docker_image" metadata.
+# Environment variables describing runtime environment. From inside Docker container
+# it is not really possible to obtain information about the Docker image used for
+# the container. This is why we use environment variable to pass this information in.
+# See descriptions of "base_docker_image", "docker_image", and "worker_id" metadata.
 D3M_BASE_IMAGE_NAME = 'D3M_BASE_IMAGE_NAME'
 D3M_BASE_IMAGE_DIGEST = 'D3M_BASE_IMAGE_DIGEST'
 D3M_IMAGE_NAME = 'D3M_IMAGE_NAME'
 D3M_IMAGE_DIGEST = 'D3M_IMAGE_DIGEST'
+D3M_WORKER_ID = 'D3M_WORKER_ID'
 
 # Limits on CPU and memory compute resources available to the runtime
 # can be communicated also through environment variables because it is

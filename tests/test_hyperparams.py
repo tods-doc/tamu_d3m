@@ -505,6 +505,8 @@ class TestHyperparams(unittest.TestCase):
         self.assertEqual(ConfigurationHyperparams.configuration['configuration'].to_simple_structure(), hyperparams.Uniform(1.0, 10.0, 2.0).to_simple_structure())
 
     def test_numpy(self):
+        self.maxDiff = None
+
         class TestHyperparams(hyperparams.Hyperparams):
             value = hyperparams.Hyperparameter[container.ndarray](
                 default=container.ndarray([0], generate_metadata=True),
@@ -512,7 +514,11 @@ class TestHyperparams(unittest.TestCase):
 
         values = TestHyperparams(value=container.ndarray([1, 2, 3], generate_metadata=True))
 
-        self.assertEqual(values.values_to_json_structure(), {'value': {'encoding': 'pickle', 'value': 'gANjbnVtcHkuY29yZS5tdWx0aWFycmF5Cl9yZWNvbnN0cnVjdApxAGNkM20uY29udGFpbmVyLm51bXB5Cm5kYXJyYXkKcQFLAIVxAkMBYnEDh3EEUnEFfXEGKFgFAAAAbnVtcHlxByhLAUsDhXEIY251bXB5CmR0eXBlCnEJWAIAAABpOHEKSwBLAYdxC1JxDChLA1gBAAAAPHENTk5OSv////9K/////0sAdHEOYolDGAEAAAAAAAAAAgAAAAAAAAADAAAAAAAAAHEPdHEQWAgAAABtZXRhZGF0YXERY2QzbS5tZXRhZGF0YS5iYXNlCkRhdGFNZXRhZGF0YQpxEimBcRN9cRQoWBEAAABfY3VycmVudF9tZXRhZGF0YXEVY2QzbS5tZXRhZGF0YS5iYXNlCk1ldGFkYXRhRW50cnkKcRYpgXEXTn1xGChYCAAAAGVsZW1lbnRzcRljZDNtLnV0aWxzCnBtYXAKcRp9cRuFcRxScR1YDAAAAGFsbF9lbGVtZW50c3EeaBYpgXEfTn1xIChoGWgdaB5OaBFjZnJvemVuZGljdApGcm96ZW5PcmRlcmVkRGljdApxISmBcSJ9cSMoWAUAAABfZGljdHEkY2NvbGxlY3Rpb25zCk9yZGVyZWREaWN0CnElKVJxJlgPAAAAc3RydWN0dXJhbF90eXBlcSdjbnVtcHkKaW50NjQKcShzWAUAAABfaGFzaHEpTnViWAgAAABpc19lbXB0eXEqiVgRAAAAaXNfZWxlbWVudHNfZW1wdHlxK4h1hnEsYmgRaCEpgXEtfXEuKGgkaCUpUnEvKFgGAAAAc2NoZW1hcTBYQgAAAGh0dHBzOi8vbWV0YWRhdGEuZGF0YWRyaXZlbmRpc2NvdmVyeS5vcmcvc2NoZW1hcy92MC9jb250YWluZXIuanNvbnExaCdoAVgJAAAAZGltZW5zaW9ucTJoISmBcTN9cTQoaCRoJSlScTVYBgAAAGxlbmd0aHE2SwNzaClOdWJ1aClOdWJoKoloK4h1hnE3YmgpTnVidWIu'}})
+        self.assertIn(values.values_to_json_structure(), [
+            {'value': {'encoding': 'pickle', 'value': 'gANjbnVtcHkuY29yZS5tdWx0aWFycmF5Cl9yZWNvbnN0cnVjdApxAGNkM20uY29udGFpbmVyLm51bXB5Cm5kYXJyYXkKcQFLAIVxAkMBYnEDh3EEUnEFfXEGKFgFAAAAbnVtcHlxByhLAUsDhXEIY251bXB5CmR0eXBlCnEJWAIAAABpOHEKSwBLAYdxC1JxDChLA1gBAAAAPHENTk5OSv////9K/////0sAdHEOYolDGAEAAAAAAAAAAgAAAAAAAAADAAAAAAAAAHEPdHEQWAgAAABtZXRhZGF0YXERY2QzbS5tZXRhZGF0YS5iYXNlCkRhdGFNZXRhZGF0YQpxEimBcRN9cRQoWBEAAABfY3VycmVudF9tZXRhZGF0YXEVY2QzbS5tZXRhZGF0YS5iYXNlCk1ldGFkYXRhRW50cnkKcRYpgXEXTn1xGChYCAAAAGVsZW1lbnRzcRljZDNtLnV0aWxzCnBtYXAKcRp9cRuFcRxScR1YDAAAAGFsbF9lbGVtZW50c3EeaBYpgXEfTn1xIChoGWgdaB5OaBFjZnJvemVuZGljdApGcm96ZW5PcmRlcmVkRGljdApxISmBcSJ9cSMoWAUAAABfZGljdHEkY2NvbGxlY3Rpb25zCk9yZGVyZWREaWN0CnElKVJxJlgPAAAAc3RydWN0dXJhbF90eXBlcSdjbnVtcHkKaW50NjQKcShzWAUAAABfaGFzaHEpTnViWAgAAABpc19lbXB0eXEqiVgRAAAAaXNfZWxlbWVudHNfZW1wdHlxK4h1hnEsYmgRaCEpgXEtfXEuKGgkaCUpUnEvKFgGAAAAc2NoZW1hcTBYQgAAAGh0dHBzOi8vbWV0YWRhdGEuZGF0YWRyaXZlbmRpc2NvdmVyeS5vcmcvc2NoZW1hcy92MC9jb250YWluZXIuanNvbnExaCdoAVgJAAAAZGltZW5zaW9ucTJoISmBcTN9cTQoaCRoJSlScTVYBgAAAGxlbmd0aHE2SwNzaClOdWJ1aClOdWJoKoloK4h1hnE3YmgpTnVidWIu'}},
+            # A newer numpy version.
+            {'value': {'encoding': 'pickle', 'value': 'gANjbnVtcHkuY29yZS5tdWx0aWFycmF5Cl9yZWNvbnN0cnVjdApxAGNkM20uY29udGFpbmVyLm51bXB5Cm5kYXJyYXkKcQFLAIVxAkMBYnEDh3EEUnEFfXEGKFgFAAAAbnVtcHlxByhLAUsDhXEIY251bXB5CmR0eXBlCnEJWAIAAABpOHEKiYiHcQtScQwoSwNYAQAAADxxDU5OTkr/////Sv////9LAHRxDmKJQxgBAAAAAAAAAAIAAAAAAAAAAwAAAAAAAABxD3RxEFgIAAAAbWV0YWRhdGFxEWNkM20ubWV0YWRhdGEuYmFzZQpEYXRhTWV0YWRhdGEKcRIpgXETfXEUKFgRAAAAX2N1cnJlbnRfbWV0YWRhdGFxFWNkM20ubWV0YWRhdGEuYmFzZQpNZXRhZGF0YUVudHJ5CnEWKYFxF059cRgoWAgAAABlbGVtZW50c3EZY2QzbS51dGlscwpwbWFwCnEafXEbhXEcUnEdWAwAAABhbGxfZWxlbWVudHNxHmgWKYFxH059cSAoaBloHWgeTmgRY2Zyb3plbmRpY3QKRnJvemVuT3JkZXJlZERpY3QKcSEpgXEifXEjKFgFAAAAX2RpY3RxJGNjb2xsZWN0aW9ucwpPcmRlcmVkRGljdApxJSlScSZYDwAAAHN0cnVjdHVyYWxfdHlwZXEnY251bXB5CmludDY0CnEoc1gFAAAAX2hhc2hxKU51YlgIAAAAaXNfZW1wdHlxKolYEQAAAGlzX2VsZW1lbnRzX2VtcHR5cSuIdYZxLGJoEWghKYFxLX1xLihoJGglKVJxLyhYBgAAAHNjaGVtYXEwWEIAAABodHRwczovL21ldGFkYXRhLmRhdGFkcml2ZW5kaXNjb3Zlcnkub3JnL3NjaGVtYXMvdjAvY29udGFpbmVyLmpzb25xMWgnaAFYCQAAAGRpbWVuc2lvbnEyaCEpgXEzfXE0KGgkaCUpUnE1WAYAAABsZW5ndGhxNksDc2gpTnVidWgpTnViaCqJaCuIdYZxN2JoKU51YnViLg=='}},
+        ])
         self.assertTrue(numpy.array_equal(TestHyperparams.values_from_json_structure(values.values_to_json_structure())['value'], values['value']))
 
     def test_set(self):

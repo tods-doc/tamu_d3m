@@ -23,7 +23,7 @@ class TestDummyImageReaderPrimitive(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'image_dataset_1', 'datasetDoc.json')
         )
 
-        dataset = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        dataset = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         dataframe_hyperparams_class = DatasetToDataFramePrimitive.metadata.get_hyperparams()
         dataframe_primitive = DatasetToDataFramePrimitive(
@@ -76,6 +76,14 @@ class TestDummyImageReaderPrimitive(unittest.TestCase):
                     'selector': ['__ALL_ELEMENTS__'],
                 },
                 {
+                    'metadata': {'structural_type': 'd3m.container.numpy.ndarray'},
+                    'selector': ['__ALL_ELEMENTS__', '__ALL_ELEMENTS__']
+                },
+                {
+                    'metadata': {'structural_type': 'str'},
+                    'selector': ['__ALL_ELEMENTS__', '__ALL_ELEMENTS__', '__ALL_ELEMENTS__', '__ALL_ELEMENTS__'],
+                },
+                {
                     'metadata': {
                         'dimension': {
                             'length': 1,
@@ -89,8 +97,7 @@ class TestDummyImageReaderPrimitive(unittest.TestCase):
                             'https://metadata.datadrivendiscovery.org/types/PrimaryKey',
                             'http://schema.org/ImageObject',
                             'https://metadata.datadrivendiscovery.org/types/Table',
-                        ],
-                        'structural_type': 'd3m.container.numpy.ndarray',
+                        ]
                     },
                     'selector': ['__ALL_ELEMENTS__', 0],
                 },
@@ -103,10 +110,6 @@ class TestDummyImageReaderPrimitive(unittest.TestCase):
                         }
                     },
                     'selector': ['__ALL_ELEMENTS__', 0, '__ALL_ELEMENTS__'],
-                },
-                {
-                    'metadata': {'structural_type': 'str'},
-                    'selector': ['__ALL_ELEMENTS__', 0, '__ALL_ELEMENTS__', '__ALL_ELEMENTS__'],
                 },
                 {
                     'metadata': {

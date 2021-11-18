@@ -8,28 +8,20 @@ import inspect
 import itertools
 import operator
 import os.path
-import pickle
 import re
 import sys
 import types
 import typing
 from urllib import parse as url_parse
 
-import frozendict  # type: ignore
-import jsonschema  # type: ignore
-import numpy  # type: ignore
-import pandas  # type: ignore
-from pytypes import type_util  # type: ignore
+import frozendict
+import jsonschema
+import numpy
+import pandas
 
 import d3m
 from . import hyperparams as hyperparams_module, primitive_names
 from d3m import deprecate, exceptions, utils
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = (
     'ALL_ELEMENTS', 'NO_VALUE', 'DataMetadata', 'PrimitiveMetadata', 'CONTAINER_SCHEMA_VERSION',
@@ -40,6 +32,7 @@ __all__ = (
 )
 
 logger = logging.getLogger(__name__)
+logger.disabled = True
 
 
 def _return_all_elements() -> 'ALL_ELEMENTS_TYPE':
@@ -287,7 +280,7 @@ class Metadata:
     def __init__(self, metadata: typing.Dict[str, typing.Any] = None, *, source: typing.Any = None, timestamp: datetime.datetime = None) -> None:
         self._current_metadata = MetadataEntry()
 
-        self._hash: int = None
+        self._hash: typing.Optional[int] = None
 
         if metadata is not None:
             self._update_in_place((), metadata, self._current_metadata)
@@ -617,10 +610,10 @@ class Metadata:
 
         segment, selector_rest = selector[0], selector[1:]
 
-        if ignore_all_elements is not None:
-            new_ignore_all_elements = ignore_all_elements - 1
-        else:
+        if ignore_all_elements is None:
             new_ignore_all_elements = None
+        else:
+            new_ignore_all_elements = ignore_all_elements - 1
 
         all_elements_metadata = self._query(selector_rest, metadata_entry.all_elements, new_ignore_all_elements)
         if segment is ALL_ELEMENTS:
@@ -711,9 +704,9 @@ class Metadata:
             if segment in new_metadata_entry.elements:
                 new_element_metadata_entry = self._remove(selector_rest, recursive, strict_all_elements, new_metadata_entry.elements[segment])
                 if new_element_metadata_entry.is_empty:
-                    new_metadata_entry.elements = new_metadata_entry.elements.remove(segment)
+                    new_metadata_entry.elements = new_metadata_entry.elements.remove(segment)  # type: ignore
                 else:
-                    new_metadata_entry.elements = new_metadata_entry.elements.set(segment, new_element_metadata_entry)
+                    new_metadata_entry.elements = new_metadata_entry.elements.set(segment, new_element_metadata_entry)  # type: ignore
                 new_metadata_entry.is_elements_empty = not new_metadata_entry.elements
                 new_metadata_entry.update_is_empty()
 
@@ -760,9 +753,9 @@ class Metadata:
             segment = typing.cast(SimpleSelectorSegment, segment)
             new_element_metadata_entry = self._update(selector_rest, new_metadata_entry.elements.get(segment, None), metadata)
             if new_element_metadata_entry.is_empty:
-                new_metadata_entry.elements = new_metadata_entry.elements.discard(segment)
+                new_metadata_entry.elements = new_metadata_entry.elements.discard(segment)  # type: ignore
             else:
-                new_metadata_entry.elements = new_metadata_entry.elements.set(segment, new_element_metadata_entry)
+                new_metadata_entry.elements = new_metadata_entry.elements.set(segment, new_element_metadata_entry)  # type: ignore
             new_metadata_entry.is_elements_empty = not new_metadata_entry.elements
             new_metadata_entry.update_is_empty()
 
@@ -831,21 +824,21 @@ class Metadata:
 
     def _remove_no_value(self, metadata: frozendict.FrozenOrderedDict) -> frozendict.FrozenOrderedDict:
         # Copy so that we can mutate.
-        metadata = collections.OrderedDict(metadata)
+        metadata_dict = collections.OrderedDict(metadata)
 
         # We iterate over a list so that we can change dict while iterating.
-        for name, value in list(metadata.items()):
+        for name, value in list(metadata_dict.items()):
             if value is NO_VALUE:
-                del metadata[name]
+                del metadata_dict[name]
             elif isinstance(value, frozendict.FrozenOrderedDict):
                 new_value = self._remove_no_value(value)
                 # If value is an empty dict, but before removing "NO_VALUE" it was not, we just remove the whole field.
-                if metadata[name] and not new_value:
-                    del metadata[name]
+                if metadata_dict[name] and not new_value:
+                    del metadata_dict[name]
                 else:
-                    metadata[name] = new_value
+                    metadata_dict[name] = new_value
 
-        return frozendict.FrozenOrderedDict(metadata)
+        return frozendict.FrozenOrderedDict(metadata_dict)
 
     def _prune(self, selector: Selector, metadata_entry: typing.Optional[MetadataEntry], metadata: frozendict.FrozenOrderedDict) -> typing.Optional[MetadataEntry]:
         if metadata_entry is None:
@@ -882,9 +875,9 @@ class Metadata:
             segment = typing.cast(SimpleSelectorSegment, segment)
             new_element_metadata_entry = self._prune(selector_rest, new_metadata_entry.elements[segment], metadata)
             if new_element_metadata_entry is None or new_element_metadata_entry.is_empty:
-                new_metadata_entry.elements = new_metadata_entry.elements.remove(segment)
+                new_metadata_entry.elements = new_metadata_entry.elements.remove(segment)  # type: ignore
             else:
-                new_metadata_entry.elements = new_metadata_entry.elements.set(segment, new_element_metadata_entry)
+                new_metadata_entry.elements = new_metadata_entry.elements.set(segment, new_element_metadata_entry)  # type: ignore
             new_metadata_entry.is_elements_empty = not new_metadata_entry.elements
             new_metadata_entry.update_is_empty()
 
@@ -1336,7 +1329,7 @@ class Metadata:
 
         return metadata
 
-    def _to_internal_simple_structure(self, selector: Selector, metadata_entry: typing.Optional[MetadataEntry]) -> typing.List[typing.Dict]:
+    def _to_internal_simple_structure(self, selector: Selector, metadata_entry: MetadataEntry) -> typing.List[typing.Dict]:
         output = []
 
         selector = typing.cast(ListSelector, selector)
@@ -1919,7 +1912,7 @@ class DataMetadata(Metadata):
 
         return columns
 
-    def _merge_generated_metadata(self, old_metadata: frozendict.FrozenOrderedDict, metadata: frozendict.FrozenOrderedDict) -> frozendict.FrozenOrderedDict:
+    def _merge_generated_metadata(self, old_metadata: frozendict.FrozenOrderedDict, metadata: typing.Mapping) -> frozendict.FrozenOrderedDict:
         # Copy so that we can mutate.
         new_metadata = collections.OrderedDict(metadata)
 
@@ -2081,6 +2074,7 @@ class DataMetadata(Metadata):
         Important: Any top-level field set by this method should be listed in ``ALL_GENERATED_KEYS``.
         """
 
+        element_index: SimpleSelectorSegment
         generated_metadata: dict = {}
 
         if is_root:
@@ -2307,7 +2301,7 @@ class DataMetadata(Metadata):
             metadata_dict = collections.OrderedDict([(selector, generated_metadata)])
 
             metadata_dict_list = []
-            metadata_indices: typing.List[typing.Tuple] = []
+            metadata_indices: typing.List[SimpleSelectorSegment] = []
             for k, v in value.items():
                 if not isinstance(k, (str, int)):
                     raise TypeError("Dict key has to be a string or an integer, not: {k_type}".format(k_type=type(k)))
@@ -2349,7 +2343,7 @@ class DataMetadata(Metadata):
 
         # We first preprocess given updates. We have to specially merge some fields and respect overrides
         # on direct elements.
-        updates: typing.List[typing.Tuple[TupleSelector, dict]] = []
+        updates: typing.List[typing.Tuple[TupleSelector, typing.Mapping]] = []
         for selector, metadata in generated_metadata_dict.items():
             existing_metadata, metadata_exceptions = self.query_with_exceptions(selector, remove_no_value=False)
 
@@ -2361,23 +2355,23 @@ class DataMetadata(Metadata):
             if 'structural_type' not in metadata and 'structural_type' in existing_metadata:
                 updates.insert(0, (selector, {'structural_type': NO_VALUE}))
 
-            metadata = self._merge_generated_metadata(existing_metadata, metadata)
+            merged_metadata = self._merge_generated_metadata(existing_metadata, metadata)
 
-            updates.append((selector, metadata))
+            updates.append((selector, merged_metadata))
 
             for exception_selector, exception_metadata in metadata_exceptions.items():
-                diff_metadata = self._diff_generated_metadata(exception_metadata, metadata)
+                diff_metadata = self._diff_generated_metadata(exception_metadata, merged_metadata)
 
                 if diff_metadata:
                     updates.append((exception_selector, diff_metadata))
 
-        for selector, metadata in updates:
-            metadata = utils.make_immutable_copy(metadata)
+        for selector, metadata_update in updates:
+            immutable_metadata_update = utils.make_immutable_copy(metadata_update)
 
-            if not isinstance(metadata, frozendict.FrozenOrderedDict):
+            if not isinstance(immutable_metadata_update, frozendict.FrozenOrderedDict):
                 raise exceptions.InvalidArgumentTypeError("Metadata should be a dict.")
 
-            self._current_metadata = self._update(selector, self._current_metadata, metadata)
+            self._current_metadata = self._update(selector, self._current_metadata, immutable_metadata_update)
 
     @deprecate.function(message="create a DataMetadata instance explicitly instead")
     @deprecate.arguments('source', 'timestamp', 'check', message="argument ignored")
@@ -2569,7 +2563,7 @@ class DataMetadata(Metadata):
             element_metadata_entry.is_elements_empty = not element_metadata_entry.elements
             element_metadata_entry.update_is_empty()
 
-        # TODO: Update boundary columns and "confidence for" references.
+        # TODO: Update boundary columns and "score for" references.
 
         return outputs_metadata
 
@@ -2594,7 +2588,7 @@ class DataMetadata(Metadata):
         if not columns:
             raise ValueError("Removing columns would have removed the last column.")
 
-        # TODO: Update boundary columns and "confidence for" references.
+        # TODO: Update boundary columns and "score for" references.
 
         return self.select_columns(columns)
 
@@ -2651,7 +2645,7 @@ class DataMetadata(Metadata):
 
         outputs_metadata = outputs_metadata.update((ALL_ELEMENTS,), {'dimension': {'length': left_length + right_length}})
 
-        # TODO: Update boundary columns and "confidence for" references.
+        # TODO: Update boundary columns and "score for" references.
 
         return outputs_metadata
 
@@ -2683,7 +2677,7 @@ class DataMetadata(Metadata):
         before = self.select_columns(list(range(0, at_column_index)))
         after = self.select_columns(list(range(at_column_index, columns_length)))
 
-        # TODO: Update boundary columns and "confidence for" references.
+        # TODO: Update boundary columns and "score for" references.
 
         return before.append_columns(columns).append_columns(after)
 
@@ -2746,7 +2740,7 @@ class DataMetadata(Metadata):
         if columns_to_remove:
             outputs = outputs.remove_columns(columns_to_remove)
 
-        # TODO: Update boundary columns and "confidence for" references.
+        # TODO: Update boundary columns and "score for" references.
 
         return outputs
 
@@ -2796,7 +2790,7 @@ class DataMetadata(Metadata):
             if remove_second_index:
                 right = right.remove_columns(right_indices)
 
-        # TODO: Update boundary columns and "confidence for" references.
+        # TODO: Update boundary columns and "score for" references.
 
         return self.append_columns(right, use_right_metadata=use_right_metadata)
 
@@ -2894,7 +2888,7 @@ class DataMetadata(Metadata):
 
     def get_column_references_by_column_index(self, current_resource_id: str, *, at: Selector = ()) -> typing.Dict[str, typing.Dict[ColumnReference, typing.List[ColumnReference]]]:
         references: typing.Dict[str, typing.Dict[ColumnReference, typing.List[ColumnReference]]] = {
-            'confidence_for': {},
+            'score_for': {},
             'rank_for': {},
             'boundary_for': {},
             'foreign_key': {},
@@ -2905,12 +2899,12 @@ class DataMetadata(Metadata):
 
             column_reference = ColumnReference(current_resource_id, column_index)
 
-            if 'confidence_for' in column_metadata and 'column_indices' in column_metadata['confidence_for']:
-                reference_resource_id = column_metadata['confidence_for'].get('resource_id', current_resource_id)
+            if 'score_for' in column_metadata and 'column_indices' in column_metadata['score_for']:
+                reference_resource_id = column_metadata['score_for'].get('resource_id', current_resource_id)
 
-                references['confidence_for'][column_reference] = [
+                references['score_for'][column_reference] = [
                     ColumnReference(reference_resource_id, reference_column_index)
-                    for reference_column_index in column_metadata['confidence_for']['column_indices']
+                    for reference_column_index in column_metadata['score_for']['column_indices']
                 ]
 
             if 'rank_for' in column_metadata and 'column_indices' in column_metadata['rank_for']:
@@ -2957,11 +2951,11 @@ class PrimitiveMetadata(Metadata):
         # Importing here to prevent import cycle.
         from d3m.primitive_interfaces import base
 
-        self.primitive: typing.Type[base.PrimitiveBase] = None
+        self.primitive: typing.Optional[typing.Type[base.PrimitiveBase]] = None
 
     # Not adhering to Liskov substitution principle: we do not have "selector" argument.
     @deprecate.arguments('source', 'timestamp', message="argument ignored")
-    def update(self: P, metadata: typing.Dict[str, typing.Any], *, source: typing.Any = None, timestamp: datetime.datetime = None) -> P:  # type: ignore
+    def update(self: P, metadata: typing.Dict[str, typing.Any], *, source: typing.Any = None, timestamp: datetime.datetime = None) -> P:
         new_metadata = super().update(selector=(), metadata=metadata)
 
         self._validate(new_metadata.query())
@@ -2994,7 +2988,7 @@ class PrimitiveMetadata(Metadata):
         self._generate_and_update()
 
     @classmethod
-    def _validate_contact_information(cls, metadata: typing.Dict) -> None:
+    def _validate_contact_information(cls, metadata: typing.Mapping) -> None:
         # See https://gitlab.com/datadrivendiscovery/d3m/issues/178 for motivation for this check.
 
         # If it is a locally registered/used primitive, we do not validate contact information.
@@ -3032,7 +3026,7 @@ class PrimitiveMetadata(Metadata):
     # which inherits description from a base class, we have to check the description itself.
     # See: https://gitlab.com/datadrivendiscovery/d3m/issues/167
     @classmethod
-    def _validate_description(cls, metadata: typing.Dict) -> None:
+    def _validate_description(cls, metadata: typing.Mapping) -> None:
         # Importing here to prevent import cycle.
         from d3m.primitive_interfaces import base
 
@@ -3046,6 +3040,7 @@ class PrimitiveMetadata(Metadata):
 
     # Checks that the primitive's Python path complies with namespace requirements.
     # See: https://gitlab.com/datadrivendiscovery/d3m/issues/3
+    # See: https://gitlab.com/datadrivendiscovery/d3m/-/issues/329
     @classmethod
     def _validate_namespace_compliance(cls, python_path: str, primitive_family: typing.Union[PrimitiveFamily, str]) -> None:  # type: ignore
         segments = python_path.split('.')
@@ -3105,8 +3100,17 @@ class PrimitiveMetadata(Metadata):
                     },
                 )
 
+        if primitive_family == 'DATA_PREPROCESSING':
+            logger.warning(
+                "%(python_path)s: Primitive is using a deprecated primitive family DATA_PREPROCESSING. "
+                "Consider using DATA_TRANSFORMATION, DATA_CLEANING, or FEATURE_EXTRACTION instead.",
+                {
+                    'python_path': python_path,
+                },
+            )
+
     @classmethod
-    def _validate(cls, metadata: typing.Dict) -> None:
+    def _validate(cls, metadata: typing.Mapping) -> None:
         PRIMITIVE_SCHEMA_VALIDATOR.validate(metadata)
 
         cls._validate_installation(metadata)
@@ -3114,7 +3118,7 @@ class PrimitiveMetadata(Metadata):
         cls._validate_docker_containers(metadata)
         cls._validate_hyperparams_to_tune(metadata)
         cls._validate_optional_constructor_arguments(metadata)
-        #cls._validate_namespace_compliance(metadata['python_path'], metadata['primitive_family'])
+        cls._validate_namespace_compliance(metadata['python_path'], metadata['primitive_family'])
         cls._validate_contact_information(metadata)
         cls._validate_description(metadata)
 
@@ -3126,7 +3130,7 @@ class PrimitiveMetadata(Metadata):
         self._validate(self.query())
 
     @classmethod
-    def _validate_installation(cls, metadata: typing.Dict) -> None:
+    def _validate_installation(cls, metadata: typing.Mapping) -> None:
         for entry in metadata.get('installation', []):
             # We can check simply equality because metadata enumerations are equal to strings as well,
             # and "entry['type']" can be both a string or an enumeration instance.
@@ -3157,10 +3161,12 @@ class PrimitiveMetadata(Metadata):
             if parsed_uri.scheme not in ['git+http', 'git+https']:
                 raise exceptions.InvalidMetadataError("Only git+http and git+https URI schemes are allowed.")
 
-            if '@' not in parsed_uri.path:
+            parsed_uri_path = url_parse.unquote(parsed_uri.path)
+
+            if '@' not in parsed_uri_path:
                 raise exceptions.InvalidMetadataError("Package URI does not include a commit hash: {package_uri}".format(package_uri=entry['package_uri']))
 
-            path, commit_hash = parsed_uri.path.rsplit('@', 1)
+            path, commit_hash = parsed_uri_path.rsplit('@', 1)
 
             if not COMMIT_HASH_REGEX.match(commit_hash):
                 raise exceptions.InvalidMetadataError("Package URI does not include a commit hash: {package_uri}".format(package_uri=entry['package_uri']))
@@ -3174,7 +3180,7 @@ class PrimitiveMetadata(Metadata):
                 raise exceptions.InvalidMetadataError("Package URI does not include a '#egg=package_name' URI suffix.")
 
     @classmethod
-    def _validate_optional_constructor_arguments(cls, metadata: typing.Dict) -> None:
+    def _validate_optional_constructor_arguments(cls, metadata: typing.Mapping) -> None:
         installation = metadata.get('installation', [])
 
         containers = [entry for entry in installation if entry.get('type', None) == PrimitiveInstallationType.DOCKER]
@@ -3186,7 +3192,7 @@ class PrimitiveMetadata(Metadata):
             raise exceptions.InvalidPrimitiveCodeError("Primitive defines a volume dependency but does not accept 'volumes' argument to the constructor.")
 
     @classmethod
-    def _validate_hyperparams_to_tune(cls, metadata: typing.Dict) -> None:
+    def _validate_hyperparams_to_tune(cls, metadata: typing.Mapping) -> None:
         hyperparams = metadata['primitive_code'].get('hyperparams', {})
 
         for name in metadata.get('hyperparams_to_tune', []):
@@ -3194,12 +3200,15 @@ class PrimitiveMetadata(Metadata):
                 raise exceptions.InvalidMetadataError("Hyper-parameter in 'hyperparams_to_tune' metadata does not exist: {name}".format(name=name))
 
     def _generate_metadata_for_primitive(self) -> typing.Dict[str, typing.Any]:
+        if self.primitive is None:
+            raise exceptions.InvalidStateError("\"contribute_to_class\" was not called to provide primitive instance.")
+
         # Importing here to prevent import cycle.
         from d3m.primitive_interfaces import base
 
         type_arguments = self._get_type_arguments()
         class_attributes = self._get_class_attributes()
-        hyperparams_class = typing.cast(typing.Type[hyperparams_module.Hyperparams], type_arguments[base.Hyperparams])
+        hyperparams_class = typing.cast(typing.Type[hyperparams_module.Hyperparams], type_arguments[typing.cast(type, base.Hyperparams)])
         arguments, instance_methods = self._get_arguments_and_methods(hyperparams_class, type_arguments)
         self._validate_constructor(instance_methods)
         self._validate_multi_produce(instance_methods)
@@ -3216,7 +3225,7 @@ class PrimitiveMetadata(Metadata):
         non_hyperparameter_arguments_keys = {name for name, argument in arguments.items() if argument['kind'] != PrimitiveArgumentKind.HYPERPARAMETER}
         overlapping_keys = hyperparams_keys & non_hyperparameter_arguments_keys
         if len(overlapping_keys):
-            raise exceptions.InvalidPrimitiveCodeError("Hyper-paramater names are overlapping with non-hyperparameter argument names: {overlapping_keys}".format(overlapping_keys=overlapping_keys))
+            raise exceptions.InvalidPrimitiveCodeError("Hyper-paramater names are overlapping with non-hyper-parameter argument names: {overlapping_keys}".format(overlapping_keys=overlapping_keys))
 
         primitive_code = {
             # We have to convert parameters to their names because JSON schema supports only strings for keys.
@@ -3278,6 +3287,9 @@ class PrimitiveMetadata(Metadata):
     # Using typing.TypeVar in type signature does not really work, so we are using type instead.
     # See: https://github.com/python/typing/issues/520
     def _get_type_arguments(self) -> typing.Dict[type, type]:
+        if self.primitive is None:
+            raise exceptions.InvalidStateError("\"contribute_to_class\" was not called to provide primitive instance.")
+
         # Importing here to prevent import cycle.
         from d3m.primitive_interfaces import base
 
@@ -3307,6 +3319,9 @@ class PrimitiveMetadata(Metadata):
             return obj
 
     def _get_interfaces(self) -> typing.Tuple[str, ...]:
+        if self.primitive is None:
+            raise exceptions.InvalidStateError("\"contribute_to_class\" was not called to provide primitive instance.")
+
         mro = [parent for parent in inspect.getmro(self.primitive) if parent.__module__.startswith('d3m.primitive_interfaces.')]
 
         interfaces: typing.List[str] = []
@@ -3328,7 +3343,7 @@ class PrimitiveMetadata(Metadata):
         # Importing here to prevent import cycle.
         from d3m.primitive_interfaces import base
 
-        params = type_arguments.get(base.Params, type(None))
+        params = type_arguments.get(typing.cast(type, base.Params), type(None))
 
         if issubclass(params, type(None)):
             return None
@@ -3388,6 +3403,7 @@ class PrimitiveMetadata(Metadata):
         from d3m.primitive_interfaces import base
         from d3m import types as types_module
 
+        singleton_produce_method: typing.Optional[bool]
         arguments: typing.Dict[str, typing.Dict] = {}
         methods: typing.Dict[str, typing.Dict] = {}
 
@@ -3542,7 +3558,7 @@ class PrimitiveMetadata(Metadata):
                     # a container value, data value, or another primitive.
                     expected_types: typing.Tuple[type, ...] = types_module.Container + types_module.Data + (base.PrimitiveBase,)
 
-                    if not utils.is_subclass(argument_type, typing.Union[expected_types]):
+                    if not utils.is_subclass(argument_type, expected_types):
                         raise exceptions.InvalidPrimitiveCodeError(
                             "Method '{method_name}' has an argument '{argument_name}' with type '{argument_type}' and not an expected type: {expected_types}".format(
                                 method_name=method_name, argument_name=argument_name,
@@ -3563,7 +3579,7 @@ class PrimitiveMetadata(Metadata):
 
                 if argument_name in arguments:
                     if argument_type != arguments[argument_name]['type']:
-                        raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which does not match a type of a previous argument with the same name: {argument_type} != {previous_type}".format(  # noqa
+                        raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which does not match a type of another argument with the same name: {argument_type} != {previous_type}".format(  # noqa
                             method_name=method_name, argument_name=argument_name,
                             argument_type=argument_type, previous_type=arguments[argument_name]['type'],
                         ))
@@ -3573,18 +3589,18 @@ class PrimitiveMetadata(Metadata):
 
                     if has_default:
                         if 'default' not in arguments[argument_name]:
-                            raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which has a default value, but a previous argument with the same name did not have a default value.".format(  # noqa
+                            raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which has a default value, but another argument with the same name did not have a default value.".format(  # noqa
                                 method_name=method_name, argument_name=argument_name,
                             ))
                         elif argument.default != arguments[argument_name]['default']:
-                            raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which does not have the same default value as a previous argument with the same name: {argument_default} != {previous_default}".format(  # noqa
+                            raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which does not have the same default value as another argument with the same name: {argument_default} != {previous_default}".format(  # noqa
                                 method_name=method_name, argument_name=argument_name,
                                 argument_default=argument.default,
                                 previous_default=arguments[argument_name]['default'],
                             ))
                     else:
                         if 'default' in arguments[argument_name]:
-                            raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which does not have a default value, but a previous argument with the same name had a default value.".format(  # noqa
+                            raise exceptions.InvalidPrimitiveCodeError("Method '{method_name}' has an argument '{argument_name}' which does not have a default value, but another argument with the same name had a default value.".format(  # noqa
                                 method_name=method_name, argument_name=argument_name,
                             ))
 
@@ -3696,7 +3712,7 @@ class PrimitiveMetadata(Metadata):
         return methods
 
     @classmethod
-    def _validate_docker_containers(cls, metadata: typing.Dict) -> None:
+    def _validate_docker_containers(cls, metadata: typing.Mapping) -> None:
         installation = metadata.get('installation', [])
 
         containers: typing.List[str] = []
@@ -3718,7 +3734,7 @@ class PrimitiveMetadata(Metadata):
             raise exceptions.InvalidMetadataError("Same Docker image key reused across multiple installation entries: {extra_keys}".format(extra_keys=containers))
 
     @classmethod
-    def _validate_volumes(cls, metadata: typing.Dict) -> None:
+    def _validate_volumes(cls, metadata: typing.Mapping) -> None:
         volumes: typing.List[str] = []
 
         for entry in cls._get_volumes(metadata):
@@ -3834,7 +3850,7 @@ class PrimitiveMetadata(Metadata):
             'random_seed': int,
             'docker_containers': typing.Dict[str, base.DockerContainer],
             'volumes': typing.Dict[str, str],
-            'temporary_directory': typing.Optional[str],
+            'temporary_directory': typing.cast(type, typing.Optional[str]),
         }
 
     def get_hyperparams(self) -> 'hyperparams_module.Hyperparams':
@@ -3844,7 +3860,7 @@ class PrimitiveMetadata(Metadata):
         return self._get_volumes(self.query())
 
     @classmethod
-    def _get_volumes(cls, metadata: typing.Dict) -> typing.Sequence[typing.Dict]:
+    def _get_volumes(cls, metadata: typing.Mapping) -> typing.Sequence[typing.Dict]:
         # We can check simply equality because metadata enumerations are equal to strings as well,
         # and "entry['type']" can be both a string or an enumeration instance.
         return [
@@ -3879,26 +3895,29 @@ def _get_inputs(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import base
 
-    return type_arguments[base.Inputs]
+    return type_arguments[typing.cast(type, base.Inputs)]
 
 
 def _get_outputs(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import base
 
-    return type_arguments[base.Outputs]
+    return type_arguments[typing.cast(type, base.Outputs)]
 
 
 def _get_input_labels(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import distance
 
-    return type_arguments[distance.InputLabels]
+    return type_arguments[typing.cast(type, distance.InputLabels)]
 
 
 # Arguments which can be fulfilled by other primitives in a pipeline.
 STANDARD_PIPELINE_ARGUMENTS = {
     'inputs': {
+        'get_type': _get_inputs,
+    },
+    'second_inputs': {
         'get_type': _get_inputs,
     },
     'outputs': {
@@ -3914,21 +3933,21 @@ def _get_hyperparams(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import base
 
-    return type_arguments[base.Hyperparams]
+    return type_arguments[typing.cast(type, base.Hyperparams)]
 
 
 def _get_docker_containers(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import base
 
-    return typing.Optional[typing.Dict[str, base.DockerContainer]]
+    return typing.cast(type, typing.Optional[typing.Dict[str, base.DockerContainer]])
 
 
 def _get_params(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import base
 
-    return type_arguments[base.Params]
+    return type_arguments[typing.cast(type, base.Params)]
 
 
 def _get_gradient_outputs(type_arguments: typing.Dict[type, type]) -> type:
@@ -3942,7 +3961,7 @@ def _get_module(type_arguments: typing.Dict[type, type]) -> type:
     # Importing here to prevent import cycle.
     from d3m.primitive_interfaces import base
 
-    return type_arguments[base.Module]
+    return type_arguments[typing.cast(type, base.Module)]
 
 
 # Arguments which are meaningful only for a runtime executing a pipeline.
@@ -4010,25 +4029,3 @@ STANDARD_RUNTIME_ARGUMENTS = {
         'get_type': _get_module,
     },
 }
-
-
-def metadata_serializer(obj: Metadata) -> dict:
-    data = {
-        'metadata': pickle.dumps(obj),
-    }
-
-    return data
-
-
-def metadata_deserializer(data: dict) -> Metadata:
-    metadata = pickle.loads(data['metadata'])
-
-    return metadata
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        Metadata, 'd3m.metadata',
-        custom_serializer=metadata_serializer,
-        custom_deserializer=metadata_deserializer,
-    )

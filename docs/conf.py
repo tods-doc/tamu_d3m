@@ -14,6 +14,7 @@
 #
 import datetime
 import os
+import string
 import sys
 
 sys.path.insert(0, os.path.abspath('.'))
@@ -112,9 +113,9 @@ html_static_path = ['_static']
 #
 html_sidebars = {
     '**': [
-        'toc.html',
-        'versions.html',
+        'version.html',
         'searchbox.html',
+        'toc.html',
     ]
 }
 
@@ -122,6 +123,21 @@ html_title = "{project} {version}".format(project=project, version=version)
 html_show_sourcelink = False
 html_copy_source = False
 modindex_common_prefix = ['d3m.']
+
+# The name of an image file (relative to this directory) to place at the top
+# of the sidebar.
+html_logo = "images/d3m_logo.png"
+
+add_function_parentheses = False
+autodoc_member_order = 'groupwise'
+autodoc_typehints = 'none'
+autodoc_default_options = {
+    'members': True,
+    'undoc-members': True,
+    'show-inheritance': True,
+    'special-members': '__getstate__, __setstate__'
+}
+autodoc_inherit_docstrings = False
 
 
 # -- Options for HTMLHelp output ---------------------------------------------
@@ -183,10 +199,10 @@ texinfo_documents = [
 
 # Example configuration for intersphinx: refer to the Python standard library.
 intersphinx_mapping = {
-    'https://docs.python.org/': None,
+    'python' :('https://docs.python.org/', None),
     'pandas': ('https://pandas.pydata.org/pandas-docs/stable/', None),
     'numpy': ('https://docs.scipy.org/doc/numpy/', None),
-    #'numpy': ('https://numpydoc.readthedocs.io/en/latest/', None),
+    'numpydoc': ('https://numpydoc.readthedocs.io/en/latest/', None),
     'scikit-learn': ('https://scikit-learn.org/stable/', None),
     'mypy': ('https://mypy.readthedocs.io/en/stable/', None),
     'setuptools': ('https://setuptools.readthedocs.io/en/latest/', None),
@@ -199,12 +215,17 @@ todo_include_todos = True
 
 
 def setup(app):
-    app.add_stylesheet('custom.css')
+    app.add_js_file('https://cdnjs.cloudflare.com/ajax/libs/sticky-sidebar/3.3.1/jquery.sticky-sidebar.min.js')
+    app.add_css_file('custom.css')
+    app.add_js_file('custom.js')
 
 
 def linkcode_resolve(domain, info):
+    global version
     if domain != 'py':
         return None
     if not info['module']:
         return None
+    if version[0] in string.digits:
+        version = 'v' + version
     return 'https://gitlab.com/datadrivendiscovery/d3m/blob/{version}/{path}.py'.format(version=version, path=info['module'].replace('.', '/'))

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline.json",
   "title": "Pipeline description",
   "description": "Schema for a description of a pipeline.",
   "type": "object",

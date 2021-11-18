@@ -13,20 +13,14 @@ import typing
 import uuid
 import yaml
 
-import dateparser  # type: ignore
-import git  # type: ignore
-import GPUtil  # type: ignore
+import dateparser
+import git
+import GPUtil
 
 import d3m
 from d3m import container, environment_variables, exceptions, utils, types
 from d3m.metadata import base as metadata_base, hyperparams as hyperparams_module, pipeline as pipeline_module, problem
 from d3m.primitive_interfaces import base
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = ('PipelineRun', 'User', 'RuntimeEnvironment')
 
@@ -78,7 +72,7 @@ class PipelineRunStep:
         self.type = step_type
         self.status: typing.Dict[str, typing.Any] = {}
         self.start: str = start
-        self.end: str = None
+        self.end: typing.Optional[str] = None
         self.environment = environment
 
     def to_json_structure(self) -> typing.Dict:
@@ -114,7 +108,7 @@ class PipelineRunStep:
             self.status['message'] = message
 
     def set_end_timestamp(self) -> None:
-        self.end = utils.datetime_for_json(datetime.datetime.now(datetime.timezone.utc))
+        self.end = utils.datetime_for_json(utils.now())
 
 
 class PipelineRunPrimitiveStep(PipelineRunStep):
@@ -127,8 +121,8 @@ class PipelineRunPrimitiveStep(PipelineRunStep):
             environment=environment
         )
 
-        self.hyperparams: hyperparams_module.Hyperparams = None
-        self.pipeline_hyperparams: typing.Set[str] = None
+        self.hyperparams: typing.Optional[hyperparams_module.Hyperparams] = None
+        self.pipeline_hyperparams: typing.Optional[typing.Set[str]] = None
         self.random_seed: typing.Optional[int] = None
         self.method_calls: typing.List[typing.Dict[str, typing.Any]] = []
         self.arguments = step.arguments
@@ -156,7 +150,7 @@ class PipelineRunPrimitiveStep(PipelineRunStep):
         return json_structure
 
     def _hyperparams_to_json_structure(self) -> typing.Optional[typing.Dict]:
-        if self.hyperparams is None:
+        if self.hyperparams is None or self.pipeline_hyperparams is None:
             return None
 
         hyperparams_json = {}
@@ -223,12 +217,12 @@ class PipelineRunPrimitiveStep(PipelineRunStep):
         return len(self.method_calls) - 1
 
     def set_method_call_start_timestamp(self, method_call_id: int) -> None:
-        self.method_calls[method_call_id]['start'] = utils.datetime_for_json(datetime.datetime.now())
+        self.method_calls[method_call_id]['start'] = utils.datetime_for_json(utils.now())
 
     def set_method_call_end_timestamp(self, method_call_id: int) -> None:
         if 'start' not in self.method_calls[method_call_id]:
             raise exceptions.InvalidStateError("Start timestamp not set.")
-        self.method_calls[method_call_id]['end'] = utils.datetime_for_json(datetime.datetime.now())
+        self.method_calls[method_call_id]['end'] = utils.datetime_for_json(utils.now())
 
     def set_method_call_result_metadata(self, method_call_id: int, result: typing.Union[base.CallResult, base.MultiCallResult]) -> None:
         metadata = None
@@ -314,21 +308,21 @@ class PipelineRun:
 
         self.datasets: typing.List[typing.Dict[str, typing.Any]] = []
 
-        self.problem: typing.Dict[str, typing.Any] = None
+        self.problem: typing.Optional[typing.Dict[str, typing.Any]] = None
         if problem_description is not None:
             self._set_problem(problem_description)
 
         self.steps: typing.List[PipelineRunStep] = []
         self.status: typing.Dict[str, typing.Any] = {}
-        self.start: str = None
-        self.end: str = None
+        self.start: typing.Optional[str] = None
+        self.end: typing.Optional[str] = None
 
         self.run: typing.Dict[str, typing.Any] = {
             'phase': phase.name,
             'is_standard_pipeline': is_standard_pipeline,
         }
         self.context = context
-        self.previous_pipeline_run = previous_pipeline_run
+        self.previous_pipeline_run_id = previous_pipeline_run.get_id() if previous_pipeline_run is not None else None
 
         if users is None:
             self.users: typing.List[User] = []
@@ -379,9 +373,9 @@ class PipelineRun:
         if self.steps:
             json_structure['steps'] = [step.to_json_structure() for step in self.steps]
 
-        if self.previous_pipeline_run is not None:
+        if self.previous_pipeline_run_id is not None:
             json_structure['previous_pipeline_run'] = {
-                'id': self.previous_pipeline_run.get_id()
+                'id': self.previous_pipeline_run_id
             }
 
         if self.context is not None:
@@ -502,13 +496,13 @@ class PipelineRun:
         return primitive_step.get_method_call_logging_callback(method_call_id)
 
     def run_started(self) -> None:
-        self.start = utils.datetime_for_json(datetime.datetime.now(datetime.timezone.utc))
+        self.start = utils.datetime_for_json(utils.now())
 
     def _set_end_timestamp(self) -> None:
-        self.end = utils.datetime_for_json(datetime.datetime.now(datetime.timezone.utc))
+        self.end = utils.datetime_for_json(utils.now())
 
     def step_started(self, step_id: int) -> None:
-        self._step_start_timestamps[step_id] = utils.datetime_for_json(datetime.datetime.now(datetime.timezone.utc))
+        self._step_start_timestamps[step_id] = utils.datetime_for_json(utils.now())
 
     def method_call_started(self, step_and_method_call_id: typing.Tuple[int, int]) -> None:
         step_id, method_call_id = step_and_method_call_id
@@ -593,6 +587,8 @@ class PipelineRun:
             'end': data_preparation_pipeline_run.end,
             'random_seed': data_preparation_pipeline_run.random_seed,
         }
+
+        self.datasets = data_preparation_pipeline_run.datasets
 
         if data_preparation_pipeline_run.is_failed():
             message = 'Data preparation pipeline failed:\n{}'.format(
@@ -810,7 +806,7 @@ class RuntimeEnvironment(dict):
         super().__init__()
 
         if worker_id is None:
-            worker_id = self._get_worker_id()
+            worker_id = self._get_worker_id(environment_variables.D3M_WORKER_ID)
         self['worker_id'] = worker_id
 
         resources = {}
@@ -868,14 +864,17 @@ class RuntimeEnvironment(dict):
             return utils.current_git_commit(
                 path=path, search_parent_directories=False,
             )
-        except git.exc.InvalidGitRepositoryError:
+        except git.InvalidGitRepositoryError:
             return d3m.__version__
 
     @classmethod
-    def _get_worker_id(cls) -> str:
+    def _get_worker_id(cls, worker_id_env_var: str) -> str:
         """
-        Compute the worker id.
+        Get worker id from the environment, or compute the worker id.
         """
+
+        if worker_id_env_var in os.environ:
+            return os.environ[worker_id_env_var]
 
         mac_address = uuid.getnode()
 
@@ -1185,15 +1184,22 @@ def _validate_pipeline_run_timestamps(pipeline_run: typing.Dict, parent_start: d
     start = dateparser.parse(pipeline_run['start'], settings={'TIMEZONE': 'UTC'})
     end = dateparser.parse(pipeline_run['end'], settings={'TIMEZONE': 'UTC'})
 
+    if start is None:
+        raise exceptions.InvalidPipelineRunError(f"Invalid start timestamp in pipeline run: {pipeline_run['start']}")
+    if end is None:
+        raise exceptions.InvalidPipelineRunError(f"Invalid end timestamp in pipeline run: {pipeline_run['end']}")
+
     if start >= end:
-        raise exceptions.InvalidPipelineRunError("Pipeline run contains a start timestamp which occurs after the corresponding end timestamp.")
+        raise exceptions.InvalidPipelineRunError(f"Pipeline run contains a start timestamp ({pipeline_run['start']}) which occurs after the corresponding end timestamp ({pipeline_run['end']}).")
 
     if parent_start is not None and parent_end is not None:
         if start <= parent_start or parent_end <= start:
-            raise exceptions.InvalidPipelineRunError("Pipeline run contains a start timestamp which occurs outside the parent timestamp range.")
+            raise exceptions.InvalidPipelineRunError(
+                f"Pipeline run contains a start timestamp ({pipeline_run['start']}) which occurs outside the parent timestamp range ({parent_start}, {parent_end})."
+            )
 
         if end <= parent_start or parent_end <= end:
-            raise exceptions.InvalidPipelineRunError("Pipeline run contains an end timestamp which occurs outside the parent timestamp range.")
+            raise exceptions.InvalidPipelineRunError(f"Pipeline run contains an end timestamp ({pipeline_run['end']}) which occurs outside the parent timestamp range ({parent_start}, {parent_end}).")
 
     for step in pipeline_run.get('steps', []):
         for method_call in pipeline_run.get('method_calls', []):
@@ -1413,15 +1419,15 @@ def validate_pipeline(pipeline_description: typing.Dict) -> None:
     for step in pipeline.steps:
         if isinstance(step, pipeline_module.SubpipelineStep):
             # We are using "NoResolver", so we have "pipeline_description" available.
-            if 'digest' not in step.pipeline_description:
+            if 'digest' not in step.pipeline_description:  # type: ignore
                 raise exceptions.InvalidPipelineError("Digest field in steps is required.")
         elif isinstance(step, pipeline_module.PrimitiveStep):
             # We are using "NoResolver", so we have "primitive_description" available.
-            if 'digest' not in step.primitive_description:
+            if 'digest' not in step.primitive_description:  # type: ignore
                 # A special case to handle a v2019.6.7 version of the core package where compute scores primitive
                 # did not have a digest because it was lacking "installation" section in metadata.
                 # See: https://gitlab.com/datadrivendiscovery/d3m/merge_requests/280
-                if step.primitive_description['id'] == '799802fb-2e11-4ab7-9c5e-dda09eb52a70' and step.primitive_description['version'] == '0.3.0':
+                if step.primitive_description['id'] == '799802fb-2e11-4ab7-9c5e-dda09eb52a70' and step.primitive_description['version'] == '0.3.0':  # type: ignore
                     continue
                 raise exceptions.InvalidPipelineError("Digest field in steps is required.")
         else:
@@ -1675,9 +1681,3 @@ def primitive_handler(arguments: argparse.Namespace) -> None:
 
     if has_errored:
         sys.exit(1)
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        PipelineRun, 'd3m.pipeline_run', pickle=True,
-    )

@@ -3,7 +3,7 @@ import unittest
 
 import numpy
 
-from d3m import container, exceptions
+from d3m import container, exceptions, utils
 from d3m.metadata import base as metadata_base
 from d3m.contrib.primitives import compute_scores
 
@@ -12,7 +12,7 @@ class ComputeScoresPrimitiveTestCase(unittest.TestCase):
     def test_regression(self):
         dataset_doc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'database_dataset_1', 'datasetDoc.json'))
 
-        dataset = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        dataset = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         # We set semantic types like runtime would.
         dataset.metadata = dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 4), 'https://metadata.datadrivendiscovery.org/types/Target')
@@ -64,7 +64,7 @@ class ComputeScoresPrimitiveTestCase(unittest.TestCase):
     def test_multivariate(self):
         dataset_doc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'multivariate_dataset_1', 'datasetDoc.json'))
 
-        dataset = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        dataset = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         # We set semantic types like runtime would.
         dataset.metadata = dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 2), 'https://metadata.datadrivendiscovery.org/types/Target')
@@ -115,7 +115,7 @@ class ComputeScoresPrimitiveTestCase(unittest.TestCase):
     def test_classification(self):
         dataset_doc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'iris_dataset_1', 'datasetDoc.json'))
 
-        dataset = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        dataset = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         # We set semantic types like runtime would.
         dataset.metadata = dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 5), 'https://metadata.datadrivendiscovery.org/types/Target')
@@ -163,7 +163,7 @@ class ComputeScoresPrimitiveTestCase(unittest.TestCase):
     def test_object_detection_just_bounding_polygon(self):
         dataset_doc_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'object_dataset_1', 'datasetDoc.json'))
 
-        dataset = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        dataset = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         # We set semantic types like runtime would.
         dataset.metadata = dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 3), 'https://metadata.datadrivendiscovery.org/types/Target')
@@ -315,6 +315,43 @@ class ComputeScoresPrimitiveTestCase(unittest.TestCase):
 
         with self.assertRaisesRegex(exceptions.InvalidArgumentValueError, 'Truth contains extra labels'):
             primitive.produce(inputs=predictions, score_dataset=truth_dataset)
+
+    def test_classification_non_d3mindex(self):
+        truth = container.DataFrame([
+            [1, 'happy-pleased'],
+            [2, 'amazed-suprised'],
+            [3, 'sad-lonely'],
+            [4, 'relaxing-calm'],
+        ], columns=['non_d3mIndex', 'class_label']) # Score dataset has a non-d3mIndex
+
+        truth_dataset = container.Dataset({'learningData': truth}, generate_metadata=True)
+
+        truth_dataset.metadata = truth_dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 0), 'https://metadata.datadrivendiscovery.org/types/PrimaryKey')
+        truth_dataset.metadata = truth_dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 1), 'https://metadata.datadrivendiscovery.org/types/Target')
+        truth_dataset.metadata = truth_dataset.metadata.add_semantic_type(('learningData', metadata_base.ALL_ELEMENTS, 1), 'https://metadata.datadrivendiscovery.org/types/TrueTarget')
+
+        predictions = container.DataFrame([
+            [1, 'happy-pleased'],
+            [2, 'amazed-suprised'],
+            [3, 'relaxing-calm'],
+            [4, 'sad-lonely'],
+        ], columns=['d3mIndex', 'class_label'], generate_metadata=True)
+
+        hyperparams_class = compute_scores.ComputeScoresPrimitive.metadata.get_hyperparams()
+        metrics_class = hyperparams_class.configuration['metrics'].elements
+        primitive = compute_scores.ComputeScoresPrimitive(hyperparams=hyperparams_class.defaults().replace({
+            'metrics': [metrics_class({
+                'metric': 'ACCURACY',
+                'pos_label': None,
+                'k': None,
+            })],
+        }))
+
+        scores = primitive.produce(inputs=predictions, score_dataset=truth_dataset).value
+
+        self.assertEqual(scores.values.tolist(), [
+            ['ACCURACY', 0.5, 0.5],
+        ])
 
 
 if __name__ == '__main__':

@@ -13,17 +13,13 @@ import traceback
 import typing
 import uuid
 
-import dateparser  # type: ignore
+import dateparser
+import frozendict
+from pytypes import type_util
 
 from d3m import container, deprecate, environment_variables, exceptions, index, utils
 from d3m.primitive_interfaces import base
 from . import base as metadata_base, hyperparams as hyperparams_module
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = (
     'Pipeline', 'Resolver', 'NoResolver', 'PrimitiveStep', 'SubpipelineStep', 'PlaceholderStep',
@@ -39,6 +35,13 @@ PIPELINE_SCHEMA_VERSION = 'https://metadata.datadrivendiscovery.org/schemas/v0/p
 CONTROL_HYPERPARAMETER_SEMANTIC_TYPE = 'https://metadata.datadrivendiscovery.org/types/ControlParameter'
 
 
+class NOT_SET_TYPE:
+    __slots__ = ()
+
+
+NOT_SET = NOT_SET_TYPE()
+
+
 class TypeInfo(typing.NamedTuple):
     structural_type: type
     singleton: typing.Optional[bool]
@@ -50,16 +53,6 @@ class Resolver:
 
     It resolves primitives from available primitives on the system,
     and resolves pipelines from files in pipeline search paths.
-
-    Attributes
-    ----------
-    strict_resolving:
-        If resolved pipeline or primitive does not fully match specified primitive reference, raise an exception?
-    strict_digest:
-        When loading pipelines or primitives, if computed digest does not match the one provided in metadata, raise an exception?
-    pipeline_search_paths:
-        A list of paths to directories with pipelines to resolve from.
-        Their files should be named ``<pipeline id>.json``, ``<pipeline id>.yml``, or ``<pipeline id>.yaml``.
 
     Parameters
     ----------
@@ -79,8 +72,12 @@ class Resolver:
         A collection of primitive path prefixes to not (try to) load.
     """
 
+    #: If resolved pipeline or primitive does not fully match specified primitive reference, raise an exception?
     strict_resolving: bool
+    #: When loading pipelines or primitives, if computed digest does not match the one provided in metadata, raise an exception?
     strict_digest: bool
+    #: A list of paths to directories with pipelines to resolve from.
+    #: Their files should be named ``<pipeline id>.json``, ``<pipeline id>.yml``, or ``<pipeline id>.yaml``.
     pipeline_search_paths: typing.Sequence[str]
 
     def __init__(self, *, strict_resolving: bool = False, strict_digest: bool = False,
@@ -162,7 +159,7 @@ class Resolver:
 
         try:
             # We first try to directly load the primitive using its Python path.
-            primitive = index.get_primitive(primitive_description['python_path'])
+            primitive: typing.Optional[typing.Type[base.PrimitiveBase]] = index.get_primitive(primitive_description['python_path'])
         except Exception:
             # We make sure we attempt to directly load the primitive only once. Otherwise error messages
             # during loading could be printed out again and again, every time we try to get this primitive.
@@ -357,26 +354,21 @@ class StepBase(metaclass=utils.AbstractMetaclass):
     """
     Class representing one step in pipeline's execution.
 
-    Attributes
-    ----------
-    index:
-        An index of the step among steps in the pipeline.
-    resolver:
-        Resolver to use.
-
     Parameters
     ----------
     resolver:
         Resolver to use.
     """
 
-    index: int
+    #: An index of the step among steps in the pipeline.
+    index: typing.Optional[int]
+    #: Resolver to use.
     resolver: Resolver
 
     def __init__(self, *, resolver: typing.Optional[Resolver] = None) -> None:
         self.resolver = self.get_resolver(resolver)
 
-        self.index: int = None
+        self.index = None
 
     @classmethod
     def get_resolver(cls, resolver: typing.Optional[Resolver]) -> Resolver:
@@ -440,6 +432,10 @@ class StepBase(metaclass=utils.AbstractMetaclass):
     def get_output_data_references(self) -> typing.AbstractSet[str]:
         pass
 
+    @abc.abstractmethod
+    def get_exposable_data_references(self) -> typing.AbstractSet[str]:
+        pass
+
     @classmethod
     @abc.abstractmethod
     def from_json_structure(cls: typing.Type[S], step_description: typing.Dict, *, resolver: Resolver = None) -> S:
@@ -457,23 +453,6 @@ class PrimitiveStep(StepBase):
     """
     Class representing a primitive execution step in pipeline's execution.
 
-    Attributes
-    ----------
-    primitive_description:
-        A description of the primitive specified for this step. Available if ``primitive`` could not be resolved.
-    primitive:
-        A primitive class associated with this step.
-    outputs:
-        A list of method names providing outputs for this step.
-    hyperparams:
-        A map of of fixed hyper-parameters to their values which are set
-        as part of a pipeline and should not be tuned during hyper-parameter tuning.
-    arguments:
-        A map between argument name and its description. Description contains
-        a data reference of an output of a prior step (or a pipeline input).
-    users:
-        Users associated with the primitive.
-
     Parameters
     ----------
     primitive_description:
@@ -482,11 +461,19 @@ class PrimitiveStep(StepBase):
         A primitive class associated with this step. If not provided, resolved using ``resolver`` from ``primitive_description``.
     """
 
-    primitive_description: typing.Dict
-    primitive: typing.Type[base.PrimitiveBase]
+    #: A description of the primitive specified for this step. Available if ``primitive`` could not be resolved.
+    primitive_description: typing.Optional[typing.Dict]
+    #: A primitive class associated with this step.
+    primitive: typing.Optional[typing.Type[base.PrimitiveBase]]
+    #: A list of method names providing outputs for this step.
     outputs: typing.List[str]
+    #: A map of of fixed hyper-parameters to their values which are set
+    #: as part of a pipeline and should not be tuned during hyper-parameter tuning.
     hyperparams: typing.Dict[str, typing.Dict]
+    #: A map between argument name and its description. Description contains
+    #: a data reference of an output of a prior step (or a pipeline input).
     arguments: typing.Dict[str, typing.Dict]
+    #: Users associated with the primitive.
     users: typing.List[typing.Dict]
 
     def __init__(self, primitive_description: typing.Dict = None, *, primitive: typing.Type[base.PrimitiveBase] = None, resolver: typing.Optional[Resolver] = None) -> None:
@@ -518,7 +505,9 @@ class PrimitiveStep(StepBase):
     def get_step_type(cls) -> metadata_base.PipelineStepType:
         return metadata_base.PipelineStepType.PRIMITIVE
 
-    def add_argument(self, name: str, argument_type: typing.Any, data_reference: typing.Union[str, typing.Sequence[str]]) -> None:
+    # TODO: Remove "NOT_SET" handling once "data_reference" gets removed and simply make the argument required.
+    @deprecate.arguments('data_reference', message="argument renamed to \"data\"")
+    def add_argument(self, name: str, argument_type: typing.Any, data: typing.Any = NOT_SET, data_reference: typing.Any = None) -> None:
         """
         Associate a data reference to an argument of this step (and underlying primitive).
 
@@ -528,18 +517,19 @@ class PrimitiveStep(StepBase):
             Argument name.
         argument_type:
             Argument type.
+        data:
+            Data reference associated with this argument, or list of data references, or value itself.
         data_reference:
-            Data reference or a list of data references associated with this argument.
+            DEPRECATED: argument renamed to ``data``.
         """
+
+        if data_reference is not None:
+            data = data_reference
+        if data is NOT_SET:
+            raise exceptions.InvalidArgumentValueError("\"data\" argument is required, but for backwards compatibility is not defined as such.")
 
         if name in self.arguments:
             raise exceptions.InvalidArgumentValueError("Argument with name '{name}' already exists.".format(name=name))
-
-        if argument_type not in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA]:
-            raise exceptions.InvalidArgumentValueError("Invalid argument type: {argument_type}".format(argument_type=argument_type))
-
-        if not isinstance(data_reference, str) and not utils.is_instance(data_reference, typing.Sequence[str]):
-            raise exceptions.InvalidArgumentTypeError("Data reference is not a string or a list of strings.".format(name=name))
 
         if self.primitive is not None:
             argument_metadata = self.primitive.metadata.query()['primitive_code'].get('arguments', {}).get(name, None)
@@ -560,9 +550,19 @@ class PrimitiveStep(StepBase):
                     ),
                 )
 
+        if argument_type not in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA, metadata_base.ArgumentType.VALUE]:
+            raise exceptions.InvalidArgumentValueError("Invalid argument type: {argument_type}".format(argument_type=argument_type))
+
+        if argument_type in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA]:
+            if not isinstance(data, str) and not utils.is_instance(data, typing.Sequence[str]):
+                raise exceptions.InvalidArgumentTypeError("Data reference '{data}' is not a string or a list of strings.".format(data=data))
+
+            if utils.is_sequence(data) and not len(data):
+                raise exceptions.InvalidArgumentValueError("An empty list of data references.")
+
         self.arguments[name] = {
             'type': argument_type,
-            'data': data_reference,
+            'data': data,
         }
 
     def add_output(self, output_id: str) -> None:
@@ -633,10 +633,18 @@ class PrimitiveStep(StepBase):
             if argument_type == metadata_base.ArgumentType.VALUE:
                 hyperparams.configuration[name].validate(data)
 
-        if argument_type in [metadata_base.ArgumentType.DATA, metadata_base.ArgumentType.PRIMITIVE]:
-            if utils.is_sequence(data):
-                if not len(data):
-                    raise exceptions.InvalidArgumentValueError("An empty list of hyper-paramater values.")
+        if argument_type in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA]:
+            if not isinstance(data, str) and not utils.is_instance(data, typing.Sequence[str]):
+                raise exceptions.InvalidArgumentTypeError("Data reference '{data}' is not a string or a list of strings.".format(data=data))
+
+            if utils.is_sequence(data) and not len(data):
+                raise exceptions.InvalidArgumentValueError("An empty list of data references.")
+        elif argument_type == metadata_base.ArgumentType.PRIMITIVE:
+            if not isinstance(data, int) and not utils.is_instance(data, typing.Sequence[int]):
+                raise exceptions.InvalidArgumentTypeError("Primitive reference '{data}' is not an integer or a list of integers.".format(data=data))
+
+            if utils.is_sequence(data) and not len(data):
+                raise exceptions.InvalidArgumentValueError("An empty list of primitive references.")
 
         self.hyperparams[name] = {
             'type': argument_type,
@@ -658,21 +666,54 @@ class PrimitiveStep(StepBase):
 
         self.users.append(user_description)
 
+    def _get_primitive_arguments_without_defaults(self) -> typing.AbstractSet[str]:
+        if self.primitive is None:
+            raise exceptions.InvalidStateError("Primitive has not been resolved.")
+
+        primitive_arguments = self.primitive.metadata.query()['primitive_code'].get('arguments', {})
+        return {
+            argument_name for argument_name, argument in primitive_arguments.items() if 'default' not in argument and argument['kind'] == metadata_base.PrimitiveArgumentKind.PIPELINE
+        }
+
+    def _get_required_arguments(self) -> typing.AbstractSet[str]:
+        if self.primitive is None:
+            raise exceptions.InvalidStateError("Primitive has not been resolved.")
+
+        primitive_arguments_without_defaults = self._get_primitive_arguments_without_defaults()
+
+        required_arguments_set = set()
+        instance_methods = self.primitive.metadata.query()['primitive_code'].get('instance_methods', {})
+
+        required_arguments_set.update(instance_methods.get('set_training_data', {}).get('arguments', []))
+
+        for output in self.outputs:
+            method_metadata = instance_methods[output]
+            assert method_metadata['kind'] == metadata_base.PrimitiveMethodKind.PRODUCE
+            required_arguments_set.update(method_metadata['arguments'])
+
+        return required_arguments_set & primitive_arguments_without_defaults
+
     def check_add(self, existing_steps: typing.Sequence[StepBase], available_data_references: typing.AbstractSet[str]) -> None:
         # Order of steps can be arbitrary during execution (given that inputs for a step are available), but we still
         # want some partial order during construction. We want that arguments can already be satisfied by existing steps.
         for argument_description in self.arguments.values():
-            if utils.is_sequence(argument_description['data']):
-                data_references = argument_description['data']
+            if argument_description['type'] in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA]:
+                if utils.is_sequence(argument_description['data']):
+                    data_references = argument_description['data']
+                else:
+                    data_references = typing.cast(typing.Sequence, [argument_description['data']])
+                for data_reference in data_references:
+                    if not isinstance(data_reference, str):
+                        raise exceptions.InvalidArgumentTypeError("Argument data reference '{data_reference}' is not a string.".format(data_reference=data_reference))
+                    elif data_reference not in available_data_references:
+                        raise exceptions.InvalidPipelineError("Argument data reference '{data_reference}' is not among available data references.".format(
+                            data_reference=data_reference,
+                        ))
+            elif argument_description['type'] == metadata_base.ArgumentType.VALUE:
+                # We do not do any validation at this point.
+                pass
             else:
-                data_references = typing.cast(typing.Sequence, [argument_description['data']])
-            for data_reference in data_references:
-                if not isinstance(data_reference, str):
-                    raise exceptions.InvalidArgumentTypeError("Argument data reference '{data_reference}' is not a string.".format(data_reference=data_reference))
-                elif data_reference not in available_data_references:
-                    raise exceptions.InvalidPipelineError("Argument data reference '{data_reference}' is not among available data references.".format(
-                        data_reference=data_reference,
-                    ))
+                raise exceptions.UnexpectedValueError("Unknown argument type: {argument_type}".format(argument_type=argument_description['type']))
 
         for hyperparameter_description in self.hyperparams.values():
             if hyperparameter_description['type'] == metadata_base.ArgumentType.DATA:
@@ -717,15 +758,11 @@ class PrimitiveStep(StepBase):
         # We do this check only if primitive has any arguments or outputs defined.
         # Otherwise it can be used as a unfitted primitive value for a hyper-parameter to another primitive.
         if self.primitive is not None and (self.arguments or self.outputs):
-            primitive_arguments = self.primitive.metadata.query()['primitive_code'].get('arguments', {})
-            required_arguments_set = {
-                argument_name for argument_name, argument in primitive_arguments.items() if 'default' not in argument and argument['kind'] == metadata_base.PrimitiveArgumentKind.PIPELINE
-            }
-
+            required_arguments = self._get_required_arguments()
             arguments_set = set(self.arguments.keys())
 
-            missing_arguments_set = required_arguments_set - arguments_set
-            if len(missing_arguments_set):
+            missing_arguments_set = required_arguments - arguments_set
+            if missing_arguments_set:
                 raise exceptions.InvalidArgumentValueError(
                     "Not all required arguments are provided for the primitive: {missing_arguments_set}".format(
                         missing_arguments_set=missing_arguments_set,
@@ -753,11 +790,12 @@ class PrimitiveStep(StepBase):
         data_references = set()
 
         for argument_description in self.arguments.values():
-            if utils.is_sequence(argument_description['data']):
-                for data_reference in argument_description['data']:
-                    data_references.add(data_reference)
-            else:
-                data_references.add(argument_description['data'])
+            if argument_description['type'] in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA]:
+                if utils.is_sequence(argument_description['data']):
+                    for data_reference in argument_description['data']:
+                        data_references.add(data_reference)
+                else:
+                    data_references.add(argument_description['data'])
 
         for hyperparameter_description in self.hyperparams.values():
             if hyperparameter_description['type'] == metadata_base.ArgumentType.VALUE:
@@ -782,38 +820,72 @@ class PrimitiveStep(StepBase):
 
         return data_references
 
+    def get_exposable_data_references(self) -> typing.AbstractSet[str]:
+        data_references = set(self.get_output_data_references())
+
+        if self.primitive is not None:
+            instance_methods = self.primitive.metadata.query()['primitive_code'].get('instance_methods', {})
+
+            for method_name, method_metadata in instance_methods.items():
+                if method_metadata['kind'] == metadata_base.PrimitiveMethodKind.PRODUCE:
+                    data_references.add('steps.{i}.{output_id}'.format(i=self.index, output_id=method_name))
+
+        return data_references
+
+    def _argument_value_from_json_structure(self, value: typing.Any) -> typing.Any:
+        value = utils.from_reversible_json_structure(value)
+
+        # A special case to allow a simple way to encode lists.
+        if type(value) in [tuple, list]:
+            value = container.List(value, generate_metadata=True)
+
+        return value
+
+    def _argument_from_json_structure(self, argument_name: str, argument_description: typing.Dict) -> typing.Dict:
+        argument_description = copy.copy(argument_description)
+
+        argument_description['type'] = metadata_base.ArgumentType[argument_description['type']]
+
+        if argument_description['type'] == metadata_base.ArgumentType.VALUE:
+            argument_description['data'] = self._argument_value_from_json_structure(argument_description['data'])
+
+        return argument_description
+
+    def _hyperparameter_from_json_structure(self, hyperparameter_name: str, hyperparameter_description: typing.Dict) -> typing.Dict:
+        hyperparameter_description = copy.copy(hyperparameter_description)
+
+        hyperparameter_description['type'] = metadata_base.ArgumentType[hyperparameter_description['type']]
+
+        # If "primitive" is not available, we do not parse the value and we leave it in its JSON form.
+        if hyperparameter_description['type'] == metadata_base.ArgumentType.VALUE and self.primitive is not None:
+            hyperparams = self.get_primitive_hyperparams()
+
+            if hyperparameter_name not in hyperparams.configuration:
+                raise exceptions.InvalidArgumentValueError(
+                    "Unknown hyper-parameter name '{name}' for primitive {primitive}.".format(
+                        name=hyperparameter_name,
+                        primitive=self.primitive,
+                    ),
+                )
+
+            hyperparameter_description['data'] = hyperparams.configuration[hyperparameter_name].value_from_json_structure(hyperparameter_description['data'])
+
+        return hyperparameter_description
+
     @classmethod
     def from_json_structure(cls: typing.Type[SP], step_description: typing.Dict, *, resolver: typing.Optional[Resolver] = None) -> SP:
         step = cls(step_description['primitive'], resolver=resolver)
 
         for argument_name, argument_description in step_description.get('arguments', {}).items():
-            argument_type = metadata_base.ArgumentType[argument_description['type']]
-            step.add_argument(argument_name, argument_type, argument_description['data'])
+            argument_description = step._argument_from_json_structure(argument_name, argument_description)
+            step.add_argument(argument_name, argument_description['type'], argument_description['data'])
 
         for output_description in step_description.get('outputs', []):
             step.add_output(output_description['id'])
 
         for hyperparameter_name, hyperparameter_description in step_description.get('hyperparams', {}).items():
-            argument_type = metadata_base.ArgumentType[hyperparameter_description['type']]
-
-            # If "primitive" is not available, we do not parse the value and we leave it in its JSON form.
-            if argument_type == metadata_base.ArgumentType.VALUE and step.primitive is not None:
-                hyperparams = step.get_primitive_hyperparams()
-
-                if hyperparameter_name not in hyperparams.configuration:
-                    raise exceptions.InvalidArgumentValueError(
-                        "Unknown hyper-parameter name '{name}' for primitive {primitive}.".format(
-                            name=hyperparameter_name,
-                            primitive=step.primitive,
-                        ),
-                    )
-
-                data = hyperparams.configuration[hyperparameter_name].value_from_json_structure(hyperparameter_description['data'])
-
-            else:
-                data = hyperparameter_description['data']
-
-            step.add_hyperparameter(hyperparameter_name, argument_type, data)
+            hyperparameter_description = step._hyperparameter_from_json_structure(hyperparameter_name, hyperparameter_description)
+            step.add_hyperparameter(hyperparameter_name, hyperparameter_description['type'], hyperparameter_description['data'])
 
         for user_description in step_description.get('users', []):
             step.add_user(user_description)
@@ -844,10 +916,16 @@ class PrimitiveStep(StepBase):
 
         return hyperparameter_description
 
+    def _argument_value_to_json_structure(self, value: typing.Any) -> typing.Any:
+        return utils.to_reversible_json_structure(value)
+
     def _argument_to_json_structure(self, argument_name: str) -> typing.Dict:
         argument_description = copy.copy(self.arguments[argument_name])
 
         argument_description['type'] = argument_description['type'].name
+
+        if argument_description['type'] == metadata_base.ArgumentType.VALUE:
+            argument_description['data'] = self._argument_value_to_json_structure(argument_description['data'])
 
         return argument_description
 
@@ -894,7 +972,7 @@ class PrimitiveStep(StepBase):
         if self.primitive is not None:
             return self.primitive.metadata.query()['id']
         else:
-            return self.primitive_description['id']
+            return self.primitive_description['id']  # type: ignore
 
 
 SS = typing.TypeVar('SS', bound='SubpipelineStep')
@@ -994,6 +1072,9 @@ class SubpipelineStep(StepBase):
 
         return data_references
 
+    def get_exposable_data_references(self) -> typing.AbstractSet[str]:
+        return self.get_output_data_references()
+
     @classmethod
     def from_json_structure(cls: typing.Type[SS], step_description: typing.Dict, *, resolver: Resolver = None) -> SS:
         step = cls(step_description['pipeline'], resolver=resolver)
@@ -1022,7 +1103,7 @@ class SubpipelineStep(StepBase):
 
             pipeline_description = self.pipeline._to_json_structure(nest_subpipelines=True)
         elif self.pipeline is None:
-            pipeline_description = self.pipeline_description
+            pipeline_description = self.pipeline_description  # type: ignore
         else:
             pipeline_description = {
                 'id': self.pipeline.id,
@@ -1042,7 +1123,7 @@ class SubpipelineStep(StepBase):
         if self.pipeline is not None:
             return self.pipeline.id
         else:
-            return self.pipeline_description['id']
+            return self.pipeline_description['id']  # type: ignore
 
 
 SL = typing.TypeVar('SL', bound='PlaceholderStep')
@@ -1094,6 +1175,9 @@ class PlaceholderStep(StepBase):
 
         return data_references
 
+    def get_exposable_data_references(self) -> typing.AbstractSet[str]:
+        return self.get_output_data_references()
+
     @classmethod
     def from_json_structure(cls: typing.Type[SL], step_description: typing.Dict, *, resolver: Resolver = None) -> SL:
         step = cls(resolver=resolver)
@@ -1129,27 +1213,6 @@ class Pipeline:
     """
     Class representing a pipeline.
 
-    Attributes
-    ----------
-    id:
-        A unique ID to identify this pipeline.
-    created:
-        Timestamp of pipeline creation in UTC timezone.
-    source:
-        Description of source.
-    name:
-        Name of the pipeline.
-    description:
-        Description of the pipeline.
-    users:
-        Users associated with the pipeline.
-    inputs:
-        A sequence of input descriptions which provide names for pipeline inputs.
-    outputs:
-        A sequence of output descriptions which provide data references for pipeline outputs.
-    steps:
-        A sequence of steps defining this pipeline.
-
     Parameters
     ----------
     pipeline_id:
@@ -1166,14 +1229,23 @@ class Pipeline:
         Description of the pipeline. Optional.
     """
 
+    #: A unique ID to identify this pipeline.
     id: str
+    #: Timestamp of pipeline creation in UTC timezone.
     created: datetime.datetime
-    source: typing.Dict
-    name: str
-    description: str
+    #: Description of source.
+    source: typing.Optional[typing.Dict]
+    #: Name of the pipeline.
+    name: typing.Optional[str]
+    #: Description of the pipeline.
+    description: typing.Optional[str]
+    #: Users associated with the pipeline.
     users: typing.List[typing.Dict]
+    #: A sequence of input descriptions which provide names for pipeline inputs.
     inputs: typing.List[typing.Dict]
+    #: A sequence of output descriptions which provide data references for pipeline outputs.
     outputs: typing.List[typing.Dict]
+    #: A sequence of steps defining this pipeline.
     steps: typing.List[StepBase]
 
     @deprecate.arguments('context', message="argument ignored")
@@ -1396,7 +1468,7 @@ class Pipeline:
 
         Those data references can be used by consequent steps as their inputs.
 
-        Attributes
+        Parameters
         ----------
         for_step:
             Instead of using all existing steps, use only steps until ``for_step`` step.
@@ -1422,28 +1494,24 @@ class Pipeline:
 
         return data_references
 
-    @deprecate.function(message="use get_producing_outputs method instead")
     def get_exposable_outputs(self) -> typing.AbstractSet[str]:
-        return self.get_producing_outputs()
-
-    def get_producing_outputs(self) -> typing.AbstractSet[str]:
         """
-        Returns a set of recursive data references of all values produced by the pipeline
+        Returns a set of recursive data references of all values exposable by the pipeline
         during its run.
 
-        This represents outputs of each step of the pipeline, the outputs of the pipeline
-        itself, but also exposable outputs of any sub-pipeline. The latter are prefixed with
-        the step prefix, e.g., ``steps.1.steps.4.produce`` is ``steps.4.produce`` output
-        of a sub-pipeline step with index 1.
+        This represents exposable outputs of each step of the pipeline and exposable outputs
+        of any sub-pipeline. The latter are prefixed with the step prefix, e.g.,
+        ``steps.1.steps.4.produce`` is ``steps.4.produce`` output of a sub-pipeline step
+        with index 1.
 
         Outputs of sub-pipelines are represented twice, as an output of the step and
         as an output of the sub-pipeline. This is done because not all outputs of a sub-pipeline
-        are necessary exposed as an output of a step because they might not be used in
+        are necessarily exposed as an output of a step because they might not be used in
         the outer pipeline, but the sub-pipeline still defines them.
 
         A primitive might have additional produce methods which could be called but they
         are not listed among step's outputs. Data references related to those produce
-        methods are not returned.
+        methods are returned as well. If you not want those, use `get_producing_outputs` instead.
 
         Returns
         -------
@@ -1453,25 +1521,78 @@ class Pipeline:
         exposable_outputs: typing.Set[str] = set()
 
         for step_index, step in enumerate(self.steps):
-            output_data_references = set(step.get_output_data_references())
+            exposable_data_references = set(step.get_exposable_data_references())
 
             if isinstance(step, SubpipelineStep):
-                for exposable_output in step.pipeline.get_producing_outputs():
-                    output_data_references.add('steps.{step_index}.{exposable_output}'.format(
+                if step.pipeline is None:
+                    raise exceptions.InvalidStateError("Pipeline has not been resolved.")
+
+                for exposable_output in step.pipeline.get_exposable_outputs():
+                    exposable_data_references.add('steps.{step_index}.{exposable_output}'.format(
                         step_index=step_index,
                         exposable_output=exposable_output,
                     ))
 
-            existing_data_references = exposable_outputs & output_data_references
+            existing_data_references = exposable_outputs & exposable_data_references
             if existing_data_references:
                 raise exceptions.InvalidPipelineError("Steps have overlapping exposable data references: {existing_data_references}".format(existing_data_references=existing_data_references))
 
-            exposable_outputs.update(output_data_references)
+            exposable_outputs.update(exposable_data_references)
 
         for i, output_description in enumerate(self.outputs):
             exposable_outputs.add('outputs.{i}'.format(i=i))
 
         return exposable_outputs
+
+    def get_producing_outputs(self) -> typing.AbstractSet[str]:
+        """
+        Returns a set of recursive data references of all values produced by the pipeline
+        during its run.
+
+        This represents outputs of each step of the pipeline, the outputs of the pipeline
+        itself, but also producing outputs of any sub-pipeline. The latter are prefixed with
+        the step prefix, e.g., ``steps.1.steps.4.produce`` is ``steps.4.produce`` output
+        of a sub-pipeline step with index 1.
+
+        Outputs of sub-pipelines are represented twice, as an output of the step and
+        as an output of the sub-pipeline. This is done because not all outputs of a sub-pipeline
+        are necessarily exposed as an output of a step because they might not be used in
+        the outer pipeline, but the sub-pipeline still defines them.
+
+        A primitive might have additional produce methods which could be called but they
+        are not listed among step's outputs. Data references related to those produce
+        methods are not returned. If you need those as well, use `get_exposable_outputs` isntead.
+
+        Returns
+        -------
+        A set of recursive data references.
+        """
+
+        producing_outputs: typing.Set[str] = set()
+
+        for step_index, step in enumerate(self.steps):
+            output_data_references = set(step.get_output_data_references())
+
+            if isinstance(step, SubpipelineStep):
+                if step.pipeline is None:
+                    raise exceptions.InvalidStateError("Pipeline has not been resolved.")
+
+                for producing_output in step.pipeline.get_producing_outputs():
+                    output_data_references.add('steps.{step_index}.{producing_output}'.format(
+                        step_index=step_index,
+                        producing_output=producing_output,
+                    ))
+
+            existing_data_references = producing_outputs & output_data_references
+            if existing_data_references:
+                raise exceptions.InvalidPipelineError("Steps have overlapping producing data references: {existing_data_references}".format(existing_data_references=existing_data_references))
+
+            producing_outputs.update(output_data_references)
+
+        for i, output_description in enumerate(self.outputs):
+            producing_outputs.add('outputs.{i}'.format(i=i))
+
+        return producing_outputs
 
     def check(self, *, allow_placeholders: bool = False, standard_pipeline: bool = True, input_types: typing.Dict[str, type] = None) -> None:
         """
@@ -1579,12 +1700,13 @@ class Pipeline:
                     primitive_arguments = primitive_metadata['primitive_code'].get('arguments', {})
 
                 for argument_name, argument_description in step.arguments.items():
-                    # This is checked already during pipeline construction in "check_add".
-                    if utils.is_sequence(argument_description['data']):
-                        for data_reference in argument_description['data']:
-                            assert data_reference in environment
-                    else:
-                        assert argument_description['data'] in environment
+                    if argument_description['type'] in [metadata_base.ArgumentType.CONTAINER, metadata_base.ArgumentType.DATA]:
+                        # This is checked already during pipeline construction in "check_add".
+                        if utils.is_sequence(argument_description['data']):
+                            for data_reference in argument_description['data']:
+                                assert data_reference in environment
+                        else:
+                            assert argument_description['data'] in environment
 
                     if step.primitive is not None:
                         # This is checked already during pipeline construction in "add_argument".
@@ -1606,36 +1728,54 @@ class Pipeline:
                         # We cannot really check if types match because we do not know
                         # the type of elements from just container structural type.
                     elif step.primitive is not None:
-                        assert argument_description['type'] == metadata_base.ArgumentType.CONTAINER, argument_description['type']
-
-                        if utils.is_sequence(argument_description['data']):
-                            if not utils.is_subclass(primitive_arguments[argument_name]['type'], container.List):
-                                raise exceptions.InvalidPipelineError(
-                                    "Argument '{argument_name}' of step {step_index} of pipeline '{pipeline_id}' should have type 'List' to support getting a list of values, "
-                                    "but it has type '{argument_type}'.".format(
-                                        argument_name=argument_name,
-                                        step_index=step_index,
-                                        pipeline_id=self.id,
-                                        argument_type=primitive_arguments[argument_name]['type'],
-                                    ),
-                                )
-
-                        else:
-                            type_info = environment[argument_description['data']]
-
-                            if type_info.structural_type is typing.Any or primitive_arguments[argument_name]['type'] is typing.Any:
+                        if argument_description['type'] == metadata_base.ArgumentType.VALUE:
+                            if primitive_arguments[argument_name]['type'] is typing.Any:
                                 # No type information.
                                 pass
-                            elif not utils.is_subclass(type_info.structural_type, primitive_arguments[argument_name]['type']):
-                                raise exceptions.InvalidPipelineError(
-                                    "Argument '{argument_name}' of step {step_index} of pipeline '{pipeline_id}' has type '{argument_type}', but it is getting a type '{input_type}'.".format(
-                                        argument_name=argument_name,
-                                        step_index=step_index,
-                                        pipeline_id=self.id,
-                                        argument_type=primitive_arguments[argument_name]['type'],
-                                        input_type=type_info.structural_type,
-                                    ),
-                                )
+                            else:
+                                data_type = type_util.deep_type(argument_description['data'])
+                                if not utils.is_subclass(data_type, primitive_arguments[argument_name]['type']):
+                                    raise exceptions.InvalidPipelineError(
+                                        "Argument '{argument_name}' of step {step_index} of pipeline '{pipeline_id}' has type '{argument_type}', but it is getting a type '{data_type}'.".format(
+                                            argument_name=argument_name,
+                                            step_index=step_index,
+                                            pipeline_id=self.id,
+                                            argument_type=primitive_arguments[argument_name]['type'],
+                                            data_type=data_type,
+                                        ),
+                                    )
+
+                        else:
+                            assert argument_description['type'] == metadata_base.ArgumentType.CONTAINER, argument_description['type']
+
+                            if utils.is_sequence(argument_description['data']):
+                                if not utils.is_subclass(primitive_arguments[argument_name]['type'], container.List):
+                                    raise exceptions.InvalidPipelineError(
+                                        "Argument '{argument_name}' of step {step_index} of pipeline '{pipeline_id}' should have type 'List' to support getting a list of values, "
+                                        "but it has type '{argument_type}'.".format(
+                                            argument_name=argument_name,
+                                            step_index=step_index,
+                                            pipeline_id=self.id,
+                                            argument_type=primitive_arguments[argument_name]['type'],
+                                        ),
+                                    )
+
+                            else:
+                                type_info = environment[argument_description['data']]
+
+                                if type_info.structural_type is typing.Any or primitive_arguments[argument_name]['type'] is typing.Any:
+                                    # No type information.
+                                    pass
+                                elif not utils.is_subclass(type_info.structural_type, primitive_arguments[argument_name]['type']):
+                                    raise exceptions.InvalidPipelineError(
+                                        "Argument '{argument_name}' of step {step_index} of pipeline '{pipeline_id}' has type '{argument_type}', but it is getting a type '{input_type}'.".format(
+                                            argument_name=argument_name,
+                                            step_index=step_index,
+                                            pipeline_id=self.id,
+                                            argument_type=primitive_arguments[argument_name]['type'],
+                                            input_type=type_info.structural_type,
+                                        ),
+                                    )
 
                 if step.primitive is not None:
                     hyperparams = step.get_primitive_hyperparams()
@@ -1762,10 +1902,9 @@ class Pipeline:
 
                         produce_type = method_description['returns']
 
-                        # This should be checked by some other part of the code (like primitive validation).
-                        assert issubclass(produce_type, base.CallResult), produce_type
+                        # TODO: We should check that produced type is a subclass of CallResult. Maybe in primitive validation and not here?
 
-                        output_type = utils.get_type_arguments(produce_type)[base.T]  # type: ignore
+                        output_type = utils.get_type_arguments(produce_type)[typing.cast(type, base.T)]
 
                         environment[output_data_reference] = TypeInfo(output_type, method_description.get('singleton', False))
                     else:
@@ -1988,12 +2127,12 @@ class Pipeline:
         pipeline:
             A pipeline instance.
         strict_order:
-            If true, we will treat inputs of `Set` hyperparameters as a list, and the order of primitives are determined by their step indices.
-            Otherwise we will try to sort contents of `Set` hyperparameters so the orders of their contents are not important,
+            If true, we will treat inputs of `Set` hyper-parameters as a list, and the order of primitives are determined by their step indices.
+            Otherwise we will try to sort contents of `Set` hyper-parameters so the orders of their contents are not important,
             and we will try topological sorting to determine the order of nodes.
         only_control_hyperparams:
-            If true, equality checks will not happen for any hyperparameters that are not of the ``ControlParameter`` semantic type, i.e.
-            there will be no checks for hyperparameters that are specific to the hyperparameter optimization phase, and not part of the
+            If true, equality checks will not happen for any hyper-parameters that are not of the ``ControlParameter`` semantic type, i.e.
+            there will be no checks for hyper-parameters that are specific to the hyper-parameter optimization phase, and not part of the
             logic of the pipeline.
 
         Notes
@@ -2020,12 +2159,12 @@ class Pipeline:
         a pipeline in the sense of isomorphism.
 
         strict_order:
-            If true, we will treat inputs of `Set` hyperparameters as a list, and the order of primitives are determined by their step indices.
-            Otherwise we will try to sort contents of `Set` hyperparameters so the orders of their contents are not important,
+            If true, we will treat inputs of `Set` hyper-parameters as a list, and the order of primitives are determined by their step indices.
+            Otherwise we will try to sort contents of `Set` hyper-parameters so the orders of their contents are not important,
             and we will try topological sorting to determine the order of nodes.
         only_control_hyperparams:
-            If true, equality checks will not happen for any hyperparameters that are not of the ``ControlParameter`` semantic type, i.e.
-            there will be no checks for hyperparameters that are specific to the hyperparameter optimization phase, and not part of the
+            If true, equality checks will not happen for any hyper-parameters that are not of the ``ControlParameter`` semantic type, i.e.
+            there will be no checks for hyper-parameters that are specific to the hyper-parameter optimization phase, and not part of the
             logic of the pipeline.
         """
 
@@ -2039,9 +2178,9 @@ class Pipeline:
 # There are several forms of input indices.
 # 1. Named arguments. They are typically strings or tuple-wrapped strings.
 # 2. Pipeline outputs. They are integers.
-# 3. Value-type & container-type hyperparameters. They are strings.
-# 4. Data-type hyperparameters. They are tuples like (name, type) or (name, type, index).
-# 5. Primitive-type hyperparameters. They are strings or tuples like (name, index).
+# 3. Value-type & container-type hyper-parameters. They are strings.
+# 4. Data-type hyper-parameters. They are tuples like (name, type) or (name, type, index).
+# 5. Primitive-type hyper-parameters. They are strings or tuples like (name, index).
 InputIndex = typing.Union[int, str, typing.Tuple[str], typing.Tuple[str, str], typing.Tuple[str, int], typing.Tuple[str, str, int]]
 OutputIndex = int
 Edge = typing.NamedTuple('Edge', [('input_index', InputIndex), ('output_index', OutputIndex)])
@@ -2059,26 +2198,18 @@ class OrderedNode(metaclass=utils.AbstractMetaclass):
         The topological order of this node in the DAG.
     inputs_ref:
         The inputs containing unresolved reference strings or list of indices.
-
-    Attributes
-    ----------
-    name:
-        The name of this node.
-    topological_order:
-        The topological order of a node in a DAG.
-    global_order:
-        The global order of a node in a DAG.
-    inputs:
-        The inputs of the node. They serve as the edges in a DAG.
-    children:
-        The descendants of this node.
     """
 
+    #: The name of this node.
     name: str
+    #: The topological order of a node in a DAG.
     topological_order: int
-    global_order: int
-    inputs: typing.Dict
-    children: typing.Dict
+    #: The global order of a node in a DAG.
+    global_order: typing.Optional[int]
+    #: The inputs of the node. They serve as the edges in a DAG.
+    inputs: 'typing.Dict[InputIndex, typing.Tuple[OrderedNode, int]]'
+    #: The descendants of this node.
+    children: 'typing.DefaultDict[OrderedNode, typing.Set[InputIndex]]'
 
     def __init__(self, name: str, topological_order: int = 0, inputs_ref: typing.Optional[typing.Union[typing.Dict[InputIndex, str], typing.List[str]]] = None) -> None:
         self.name = name
@@ -2090,9 +2221,9 @@ class OrderedNode(metaclass=utils.AbstractMetaclass):
             inputs_ref = collections.OrderedDict(enumerate(inputs_ref))
         self._inputs_ref = inputs_ref
 
-        self.global_order: typing.Optional[int] = None
-        self.inputs: typing.Dict[InputIndex, typing.Tuple['OrderedNode', int]] = collections.OrderedDict()
-        self.children: typing.DefaultDict['OrderedNode', typing.Set[InputIndex]] = collections.defaultdict(set)
+        self.global_order = None
+        self.inputs = collections.OrderedDict()
+        self.children = collections.defaultdict(set)
         self._frozen = False
         self._unique_equivalence_class_repr: typing.Optional[typing.Tuple] = None
 
@@ -2223,7 +2354,7 @@ class OrderedNode(metaclass=utils.AbstractMetaclass):
             parent.remove_child(node_with_inputs, input_index)
 
     @abc.abstractmethod
-    def reference_name(self) -> int:
+    def reference_name(self) -> typing.Optional[int]:
         """
         The name to reference itself.
         """
@@ -2339,55 +2470,45 @@ class OutputsNode(OrderedNode):
 class PrimitiveNode(OrderedNode):
     """
     This class represents a primitive step in a DAG.
-
-    Attributes
-    ----------
-    index:
-        The index of this step in the pipeline.
-    primitive_step:
-        The PrimitiveStep instance.
-    _steps_ref:
-        Raw inputs info contains step reference indices.
-    steps:
-        Steps used by this node as parameters or hyperparameters.
-    values:
-        Inputs contains simple value.
-    strict_order:
-        If true, we will treat inputs of `Set` hyperparameters as a list.
-        Otherwise we will try to sort their contents so the orders of their contents are not important.
-    only_control_hyperparams:
-        If true, hyperparameters that are not of the `ControlParameter` semantic type. will not be included
-        in the node's representation.
     """
 
-    index: int
+    #: The index of this step in the pipeline.
+    index: typing.Optional[int]
+    #: The PrimitiveStep instance.
     primitive_step: PrimitiveStep
+    #: Raw inputs info contains step reference indices.
     _steps_ref: typing.Dict
-    steps: typing.Dict
-    values: typing.Dict
+    #: Steps used by this node as parameters or hyper-parameters.
+    steps: typing.Dict[InputIndex, OrderedNode]
+    #: Inputs contains simple value.
+    values: typing.Dict[str, typing.Any]
+    #: If true, we will treat inputs of `Set` hyper-parameters as a list.
+    #: Otherwise we will try to sort their contents so the orders of their contents are not important.
     strict_order: bool
+    #: If true, hyper-parameters that are not of the `ControlParameter` semantic type. will not be included
+    #: in the node's representation.
     only_control_hyperparams: bool
 
     def __init__(self, primitive: PrimitiveStep, *, strict_order: bool, only_control_hyperparams: bool) -> None:
         # We wraps argument names with a tuple to unify sorting.
         super().__init__(primitive.get_primitive_id(), inputs_ref={(k,): v['data'] for k, v in primitive.arguments.items()})
 
-        self.index: int = primitive.index
+        self.index = primitive.index
         self.primitive_step = primitive
         self.strict_order = strict_order
         self.only_control_hyperparams = only_control_hyperparams
 
         self._outputs: typing.List[str] = primitive.outputs.copy()
         self._steps_ref: typing.Dict[InputIndex, int] = collections.OrderedDict()
-        self.steps: typing.Dict[InputIndex, OrderedNode] = collections.OrderedDict()
-        self.values: typing.Dict[str, typing.Any] = collections.OrderedDict()
+        self.steps = collections.OrderedDict()
+        self.values = collections.OrderedDict()
 
         if self.primitive_step.primitive is not None:
-            hyperparameters = self.primitive_step.get_primitive_hyperparams().configuration
+            hyperparameters: typing.Optional[frozendict.FrozenOrderedDict] = self.primitive_step.get_primitive_hyperparams().configuration
         else:
             hyperparameters = None
 
-        # Resolve hyper-parameters. For sequential hyperparameters, we consider their order matters.
+        # Resolve hyper-parameters. For sequential hyper-parameters, we consider their order matters.
         for name, hyperparameter_description in primitive.hyperparams.items():
             if only_control_hyperparams and hyperparameters is not None and CONTROL_HYPERPARAMETER_SEMANTIC_TYPE not in hyperparameters[name].semantic_types:
                 continue
@@ -2424,7 +2545,7 @@ class PrimitiveNode(OrderedNode):
             else:
                 raise exceptions.UnexpectedValueError("Unknown hyper-parameter type: {hyperparameter_type}".format(hyperparameter_type=hyperparameter_description['type']))
 
-    def reference_name(self) -> int:
+    def reference_name(self) -> typing.Optional[int]:
         return self.index
 
     def output_reference_names(self) -> typing.List[str]:
@@ -2434,7 +2555,7 @@ class PrimitiveNode(OrderedNode):
 
         return ['steps.{i}.{output_id}'.format(i=self.index, output_id=output_id) for output_id in self._outputs]
 
-    def resolve_step_references(self, nodes_reverse_dict: typing.Dict[int, OrderedNode]) -> None:
+    def resolve_step_references(self, nodes_reverse_dict: typing.Dict[typing.Optional[int], OrderedNode]) -> None:
         """
         Resolve step references with a lookup dict.
         """
@@ -2493,21 +2614,17 @@ class PrimitiveNode(OrderedNode):
 class PlaceholderNode(OrderedNode):
     """
     This class represents a placeholder step in a DAG.
-
-    Attributes
-    ----------
-    index:
-        The index of this step in the pipeline.
     """
 
-    index: int
+    #: The index of this step in the pipeline.
+    index: typing.Optional[int]
 
     def __init__(self, placeholder: PlaceholderStep) -> None:
         super().__init__(PlaceholderStep.__name__, inputs_ref=placeholder.inputs.copy())
-        self.index: int = placeholder.index
+        self.index = placeholder.index
         self._outputs: typing.List[str] = placeholder.outputs.copy()
 
-    def reference_name(self) -> int:
+    def reference_name(self) -> typing.Optional[int]:
         return self.index
 
     def output_reference_names(self) -> typing.List[str]:
@@ -2529,38 +2646,30 @@ class SubpipelineNode(OrderedNode):
     ----------
     subpipeline:
         A subpipeline instance.
-
-    Attributes
-    ----------
-    index:
-        The index of this step in the pipeline.
-    pipeline_id:
-        The pipeline ID of subpipeline.
-    pipeline:
-        The sub-pipeline instance. If the sub-pipeline hasn't been resolved, it should be `None`.
-    strict_order:
-        If true, we will treat inputs of `Set` hyperparameters as a list.
-        Otherwise we will try to sort their contents so the orders of their contents are not important.
-    only_control_hyperparams:
-        If true, hyperparameters that are not of the ``ControlParameter`` semantic type will not be included
-        in the graph representation of this subpipeline's primitive steps.
     """
 
-    index: int
+    #: The index of this step in the pipeline.
+    index: typing.Optional[int]
+    #: The pipeline ID of subpipeline.
     pipeline_id: str
+    #: The sub-pipeline instance. If the sub-pipeline hasn't been resolved, it should be `None`.
     pipeline: typing.Optional[Pipeline]
+    #: If true, we will treat inputs of `Set` hyper-parameters as a list.
+    #: Otherwise we will try to sort their contents so the orders of their contents are not important.
     strict_order: bool
+    #: If true, hyper-parameters that are not of the ``ControlParameter`` semantic type will not be included
+    #: in the graph representation of this subpipeline's primitive steps.
     only_control_hyperparams: bool
 
     def __init__(self, subpipeline: SubpipelineStep, *, strict_order: bool, only_control_hyperparams: bool) -> None:
         super().__init__(SubpipelineStep.__name__, inputs_ref=subpipeline.inputs.copy())
         self.strict_order = strict_order
         self.only_control_hyperparams = only_control_hyperparams
-        self.index: int = subpipeline.index
+        self.index = subpipeline.index
 
         assert subpipeline.outputs is not None
 
-        self._outputs: typing.List[str] = subpipeline.outputs.copy()
+        self._outputs: typing.List[typing.Optional[str]] = subpipeline.outputs.copy()
         self.pipeline_id: str = subpipeline.get_pipeline_id()
         self.pipeline: typing.Optional[Pipeline] = subpipeline.pipeline
 
@@ -2577,7 +2686,7 @@ class SubpipelineNode(OrderedNode):
             return PipelineDAG(self.pipeline, strict_order=self.strict_order, only_control_hyperparams=self.only_control_hyperparams)
         return None
 
-    def reference_name(self) -> int:
+    def reference_name(self) -> typing.Optional[int]:
         return self.index
 
     def output_reference_names(self) -> typing.List[str]:
@@ -2602,29 +2711,21 @@ class PipelineDAG:
     Directed acyclic graph builder for a pipeline.
 
     It has an input node as the head of the DAG and an output node as the tail.
-
-    Attributes
-    ----------
-    pipeline:
-        The associated pipeline instance.
-    step_nodes:
-        These nodes belong to the steps of the pipeline, ordered by their index (including the extra inputs node & outputs node).
-        It will be changed if we try to expand this graph.
-    nodes:
-        A set of **all** nodes in the graph.
-        It will be changed if we try to expand this graph.
-    strict_order:
-        If true, we will treat inputs of `Set` hyperparameters as a list.
-        Otherwise we will try to sort their contents so the orders of their contents are not important.
-    only_control_hyperparams:
-        If true, hyperparameters that are not of the ``ControlParameter`` semantic type will not be included
-        in the graph representation of this pipeline's primitive steps.
     """
 
+    #: The associated pipeline instance.
     pipeline: Pipeline
+    #: These nodes belong to the steps of the pipeline, ordered by their index (including the extra inputs node & outputs node).
+    #: It will be changed if we try to expand this graph.
     step_nodes: typing.List[OrderedNode]
+    #: A set of **all** nodes in the graph.
+    #: It will be changed if we try to expand this graph.
     nodes: typing.Set[OrderedNode]
+    #: If true, we will treat inputs of `Set` hyper-parameters as a list.
+    #: Otherwise we will try to sort their contents so the orders of their contents are not important.
     strict_order: bool
+    #: If true, hyper-parameters that are not of the ``ControlParameter`` semantic type will not be included
+    #: in the graph representation of this pipeline's primitive steps.
     only_control_hyperparams: bool
 
     def __init__(self, pipeline: Pipeline, *, strict_order: bool, only_control_hyperparams: bool) -> None:
@@ -2633,7 +2734,7 @@ class PipelineDAG:
         self.only_control_hyperparams = only_control_hyperparams
 
         self.step_nodes: typing.List[OrderedNode] = []
-        self._nodes_reverse_dict: typing.Dict[int, OrderedNode] = {}
+        self._nodes_reverse_dict: typing.Dict[typing.Optional[int], OrderedNode] = {}
         self._nodes_outputs_reverse_dict: typing.Dict[str, typing.Tuple[OrderedNode, OutputIndex]] = {}
 
         self.inputs_node = InputsNode(pipeline.inputs)
@@ -2741,21 +2842,15 @@ class PipelineHasher:
        It also provides a unique representation of the equivalence class of a pipeline in the sense of isomorphism.
 
     And about supporting new steps, one should extend PipelineDAG._convert_step_to_node`.
-
-    Attributes
-    ----------
-    pipeline:
-        The associated pipeline instance.
-    graph:
-        The graph representation of the pipeline.
-    strict_order:
-        If true, we will treat inputs of `Set` hyperparameters as a list, and the order of primitives are determined by their step indices.
-        Otherwise we will try to sort contents of `Set` hyperparameters so the orders of their contents are not important,
-        and we will try topological sorting to determine the order of nodes.
     """
 
+    #: The associated pipeline instance.
     pipeline: Pipeline
+    #: The graph representation of the pipeline.
     graph: PipelineDAG
+    #: If true, we will treat inputs of `Set` hyper-parameters as a list, and the order of primitives are determined by their step indices.
+    #: Otherwise we will try to sort contents of `Set` hyper-parameters so the orders of their contents are not important,
+    #: and we will try topological sorting to determine the order of nodes.
     strict_order: bool
 
     def __init__(self, pipeline: Pipeline, strict_order: bool = False, only_control_hyperparams: bool = False) -> None:
@@ -2832,8 +2927,8 @@ class PipelineHasher:
 def get_pipeline(
     pipeline_path: str, *, strict_resolving: bool = False, strict_digest: bool = False,
     pipeline_search_paths: typing.Sequence[str] = None, respect_environment_variable: bool = True, load_all_primitives: bool = True,
-    resolver_class: typing.Type[Resolver] = Resolver, pipeline_class: typing.Type[Pipeline] = Pipeline,
-) -> Pipeline:
+    resolver_class: typing.Type[Resolver] = Resolver, pipeline_class: typing.Type[P] = Pipeline,
+) -> typing.Optional[P]:
     resolver = resolver_class(
         strict_resolving=strict_resolving, strict_digest=strict_digest, pipeline_search_paths=pipeline_search_paths,
         respect_environment_variable=respect_environment_variable, load_all_primitives=load_all_primitives,
@@ -2848,7 +2943,7 @@ def get_pipeline(
             else:
                 raise ValueError("Unknown file extension.")
     else:
-        return resolver.get_pipeline({'id': pipeline_path})
+        return typing.cast(typing.Optional[P], resolver.get_pipeline({'id': pipeline_path}))
 
 
 def describe_handler(
@@ -2924,9 +3019,9 @@ def describe_handler(
                 if pipeline.source is None:
                     pipeline.source = {}
                 if arguments.set_source_name:
-                    pipeline.source['name'] = arguments.set_source_name
+                    pipeline.source['name'] = arguments.set_source_name  # type: ignore
                 elif 'name' in pipeline.source:
-                    del pipeline.source['name']
+                    del pipeline.source['name']  # type: ignore
                 if not pipeline.source:
                     pipeline.source = None
 
@@ -2941,7 +3036,7 @@ def describe_handler(
                     indent=(getattr(arguments, 'indent', 2) or None),
                     sort_keys=getattr(arguments, 'sort_keys', False),
                     allow_nan=False,
-                )  # type: ignore
+                )
                 output_stream.write('\n')
         except Exception as error:
             if getattr(arguments, 'continue', False):
@@ -2954,12 +3049,6 @@ def describe_handler(
 
     if has_errored:
         sys.exit(1)
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        Pipeline, 'd3m.pipeline', pickle=True,
-    )
 
 
 def main(argv: typing.Sequence) -> None:

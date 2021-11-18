@@ -26,7 +26,7 @@ def save_container(container: typing.Any, output_dir: str) -> None:
             container.metadata = container.metadata.update((), missing_metadata)
 
         # Dataset saver creates any missing directories.
-        dataset_uri = 'file://{dataset_path}'.format(dataset_path=os.path.abspath(os.path.join(output_dir, 'datasetDoc.json')))
+        dataset_uri = utils.path_to_uri(os.path.abspath(os.path.join(output_dir, 'datasetDoc.json')))
         container.save(dataset_uri)
     else:
         # We do not want to override anything.

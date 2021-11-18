@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/datum.json",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/datum.json",
   "title": "Data metadata",
   "description": "Schema for metadata for data itself (e.g., cells).",
   "type": "object",

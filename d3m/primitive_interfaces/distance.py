@@ -83,8 +83,8 @@ class PairwiseDistanceLearnerPrimitiveBase(PrimitiveBase[Inputs, Outputs, Params
 
         return self._multi_produce(produce_methods=produce_methods, timeout=timeout, iterations=iterations, inputs=inputs, second_inputs=second_inputs)
 
-    def fit_multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: Inputs, input_labels: InputLabels,
-                          second_inputs: Inputs, timeout: float = None, iterations: int = None) -> MultiCallResult:  # type: ignore
+    def fit_multi_produce(self, *, produce_methods: typing.Sequence[str], inputs: Inputs, input_labels: InputLabels,  # type: ignore
+                          second_inputs: Inputs, timeout: float = None, iterations: int = None) -> MultiCallResult:
         """
         A method calling ``fit`` and after that multiple produce methods at once.
 

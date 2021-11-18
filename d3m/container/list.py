@@ -1,17 +1,11 @@
 import datetime
 import typing
 
-import numpy  # type: ignore
-import pandas  # type: ignore
+import numpy
+import pandas
 
 from d3m import deprecate
 from d3m.metadata import base as metadata_base
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = ('List',)
 
@@ -48,13 +42,9 @@ class List(list):
         DEPRECATED: argument ignored.
     timestamp:
         DEPRECATED: argument ignored.
-
-    Attributes
-    ----------
-    metadata:
-        Metadata associated with the list.
     """
 
+    #: Metadata associated with the list.
     metadata: metadata_base.DataMetadata
 
     @deprecate.arguments('source', 'timestamp', 'check', message="argument ignored")
@@ -139,12 +129,16 @@ class List(list):
     def __setstate__(self, state: dict) -> None:
         self.__dict__ = state
 
-    def __reduce__(self) -> typing.Tuple[typing.Callable, typing.Tuple, dict]:
+    def __reduce__(self) -> typing.Union[str, typing.Tuple[typing.Any, ...]]:
         reduced = super().__reduce__()
         return reduced
 
 
 def list_serializer(obj: List) -> dict:
+    """
+    Serializer to be used with PyArrow.
+    """
+
     data = {
         'metadata': obj.metadata,
         'list': list(obj),
@@ -157,14 +151,10 @@ def list_serializer(obj: List) -> dict:
 
 
 def list_deserializer(data: dict) -> List:
+    """
+    Deserializer to be used with PyArrow.
+    """
+
     data_list = data.get('type', List)(data['list'])
     data_list.metadata = data['metadata']
     return data_list
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        List, 'd3m.list',
-        custom_serializer=list_serializer,
-        custom_deserializer=list_deserializer,
-    )

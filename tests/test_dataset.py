@@ -82,7 +82,7 @@ class TestDataset(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'iris_dataset_1', 'datasetDoc.json')
         )
 
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         self._test_d3m(ds, dataset_doc_path)
 
@@ -109,7 +109,7 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': 'iris_dataset_1',
                 'name': 'Iris Dataset',
-                'location_uris': ['file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path)],
+                'location_uris': [utils.path_to_uri(dataset_doc_path)],
                 'source': {'license': 'CC', 'redacted': False, 'human_subjects_research': False},
                 'dimension': {
                     'length': 1,
@@ -197,7 +197,7 @@ class TestDataset(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'iris_dataset_1', 'datasetDoc.json')
         )
 
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path), lazy=True)
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path), lazy=True)
 
         ds.metadata.check(ds)
 
@@ -213,7 +213,7 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': 'iris_dataset_1',
                 'name': 'Iris Dataset',
-                'location_uris': ['file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path)],
+                'location_uris': [utils.path_to_uri(dataset_doc_path)],
                 'source': {'license': 'CC', 'redacted': False, 'human_subjects_research': False},
                 'dimension': {
                     'length': 0,
@@ -240,7 +240,7 @@ class TestDataset(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'iris_dataset_3', 'datasetDoc.json')
         )
 
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         self._test_d3m_minimal_metadata(ds, dataset_doc_path)
 
@@ -267,7 +267,7 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': 'iris_dataset_3',
                 'name': 'Iris Dataset with minimal metadata',
-                'location_uris': ['file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path)],
+                'location_uris': [utils.path_to_uri(dataset_doc_path)],
                 'source': {'license': 'CC', 'redacted': False, 'human_subjects_research': False},
                 'dimension': {
                     'length': 1,
@@ -362,14 +362,10 @@ class TestDataset(unittest.TestCase):
         source_dataset_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'audio_dataset_1')
         )
-        source_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(source_dataset_path, 'datasetDoc.json')
-        )
+        source_dataset_uri = utils.path_to_uri(os.path.join(source_dataset_path, 'datasetDoc.json'))
 
         output_dataset_path = os.path.join(self.test_dir, 'audio_dataset_1')
-        output_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(output_dataset_path, 'datasetDoc.json')
-        )
+        output_dataset_uri = utils.path_to_uri(os.path.join(output_dataset_path, 'datasetDoc.json'))
 
         selector = ('learningData', metadata_base.ALL_ELEMENTS, 0)
         new_metadata = {'description': 'Audio files'}
@@ -384,14 +380,10 @@ class TestDataset(unittest.TestCase):
         source_dataset_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'multivariate_dataset_1')
         )
-        source_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(source_dataset_path, 'datasetDoc.json')
-        )
+        source_dataset_uri = utils.path_to_uri(os.path.join(source_dataset_path, 'datasetDoc.json'))
 
         output_dataset_path = os.path.join(self.test_dir, 'multivariate_dataset_1')
-        output_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(output_dataset_path, 'datasetDoc.json')
-        )
+        output_dataset_uri = utils.path_to_uri(os.path.join(output_dataset_path, 'datasetDoc.json'))
 
         ds = container.Dataset.load(source_dataset_uri)
         ds.save(output_dataset_uri)
@@ -428,9 +420,7 @@ class TestDataset(unittest.TestCase):
         for dataset_path in ['boston', 'breast_cancer', 'diabetes', 'digits', 'iris', 'linnerud']:
             source_dataset_uri = 'sklearn://{dataset_path}'.format(dataset_path=dataset_path)
             output_dateset_doc_path = os.path.join(self.test_dir, 'sklearn', dataset_path, 'datasetDoc.json')
-            output_dateset_doc_uri = 'file://{output_dateset_doc_path}'.format(
-                output_dateset_doc_path=output_dateset_doc_path
-            )
+            output_dateset_doc_uri = utils.path_to_uri(output_dateset_doc_path)
 
             sklearn_dataset = container.Dataset.load(source_dataset_uri)
             sklearn_dataset.save(output_dateset_doc_uri)
@@ -469,12 +459,10 @@ class TestDataset(unittest.TestCase):
         output_csv_path = os.path.join(
             self.test_dir, 'load_csv_save_d3m', 'iris_dataset_1', 'tables', 'learningData.csv'
         )
-        source_csv_uri = 'file://{source_csv_path}'.format(source_csv_path=source_csv_path)
+        source_csv_uri = utils.path_to_uri(source_csv_path)
 
         output_dateset_doc_path = os.path.join(self.test_dir, 'load_csv_save_d3m', 'iris_dataset_1', 'datasetDoc.json')
-        output_dateset_doc_uri = 'file://{output_dateset_doc_path}'.format(
-            output_dateset_doc_path=output_dateset_doc_path
-        )
+        output_dateset_doc_uri = utils.path_to_uri(output_dateset_doc_path)
 
         csv_dataset = container.Dataset.load(source_csv_uri)
         csv_dataset.save(output_dateset_doc_uri)
@@ -515,8 +503,8 @@ class TestDataset(unittest.TestCase):
             with open(input_dataset_doc_path, 'r', encoding='utf8') as f:
                 input_dataset_description = json.load(f)
 
-            ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=input_dataset_doc_path))
-            ds.save('file://{dataset_doc_path}'.format(dataset_doc_path=output_dateset_doc_path))
+            ds = container.Dataset.load(utils.path_to_uri(input_dataset_doc_path))
+            ds.save(utils.path_to_uri(output_dateset_doc_path))
 
             with open(output_dateset_doc_path) as f:
                 output_dataset_description = json.load(f)
@@ -559,15 +547,13 @@ class TestDataset(unittest.TestCase):
 
         try:
             # Load original dataset and store it's digest
-            original_dataset_uri = 'file://{dataset_path}'.format(dataset_path=dataset_path)
+            original_dataset_uri = utils.path_to_uri(dataset_path)
             original_dataset = container.Dataset.load(original_dataset_uri)
             original_dateset_digest = original_dataset.metadata.query(())['digest']
 
             # Save the dataset to a new location
             output_dataset_path = os.path.join(self.test_dir, dataset_name)
-            output_dataset_uri = 'file://{dataset_path}'.format(
-                dataset_path=os.path.join(output_dataset_path, 'datasetDoc.json')
-            )
+            output_dataset_uri = utils.path_to_uri(os.path.join(output_dataset_path, 'datasetDoc.json'))
             original_dataset.save(output_dataset_uri)
 
             # Load the dataset from the new location and store the digest
@@ -577,9 +563,7 @@ class TestDataset(unittest.TestCase):
             # Remove digest from the in-memory dataset and store the dataset to a new location
             output_dataset.metadata = output_dataset.metadata.update((), {'digest': metadata_base.NO_VALUE})
             new_output_dataset_path = os.path.join(self.test_dir, dataset_name + '_new')
-            output_dataset_uri = 'file://{dataset_path}'.format(
-                dataset_path=os.path.join(new_output_dataset_path, 'datasetDoc.json')
-            )
+            output_dataset_uri = utils.path_to_uri(os.path.join(new_output_dataset_path, 'datasetDoc.json'))
             output_dataset.save(output_dataset_uri)
 
             # Load digest from the stored datasetDoc.json
@@ -602,14 +586,10 @@ class TestDataset(unittest.TestCase):
         source_dataset_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'graph_dataset_2')
         )
-        source_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(source_dataset_path, 'datasetDoc.json')
-        )
+        source_dataset_uri = utils.path_to_uri(os.path.join(source_dataset_path, 'datasetDoc.json'))
 
         output_dataset_path = os.path.join(self.test_dir, 'graph_dataset_2')
-        output_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(output_dataset_path, 'datasetDoc.json')
-        )
+        output_dataset_uri = utils.path_to_uri(os.path.join(output_dataset_path, 'datasetDoc.json'))
 
         ds_1 = container.Dataset.load(source_dataset_uri)
         ds_1.save(output_dataset_uri)
@@ -627,13 +607,9 @@ class TestDataset(unittest.TestCase):
         source_dataset_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'audio_dataset_1')
         )
-        source_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(source_dataset_path, 'datasetDoc.json')
-        )
+        source_dataset_uri = utils.path_to_uri(os.path.join(source_dataset_path, 'datasetDoc.json'))
         output_dataset_path = os.path.join(self.test_dir, 'audio_dataset_1')
-        output_dataset_uri = 'file://{dataset_path}'.format(
-            dataset_path=os.path.join(output_dataset_path, 'datasetDoc.json')
-        )
+        output_dataset_uri = utils.path_to_uri(os.path.join(output_dataset_path, 'datasetDoc.json'))
 
         ds = container.Dataset.load(source_dataset_uri)
         # Insert a non-standard dataset value to test quality saving / loading.
@@ -684,8 +660,10 @@ class TestDataset(unittest.TestCase):
         self.assertEqual(ds_metadata, ds2_metadata)
 
     def test_d3m_saver_synthetic_dataset(self):
+        self.maxDiff = None
+
         dataset_path = os.path.abspath(os.path.join(self.test_dir, 'synthetic_dataset_1', 'datasetDoc.json'))
-        dataset_uri = 'file://{dataset_path}'.format(dataset_path=dataset_path)
+        dataset_uri = utils.path_to_uri(dataset_path)
 
         df = container.DataFrame([[0]], columns=['col_1'], generate_metadata=False)
         ds = container.Dataset(resources={'someData': df}, generate_metadata=True)
@@ -702,7 +680,7 @@ class TestDataset(unittest.TestCase):
         with self.assertRaises(exceptions.InvalidMetadataError):
             ds.save(dataset_uri)
 
-        ds.metadata = ds.metadata.update((), {'id': 'synthetic_dataset_1', 'name': 'Synthetic dataset 1'})
+        ds.metadata = ds.metadata.update((), {'id': 'synthetic_dataset_1', 'name': 'Synthetic dataset 1', 'version': '1.0'})
 
         ds.save(dataset_uri)
         ds2 = container.Dataset.load(dataset_uri)
@@ -716,7 +694,7 @@ class TestDataset(unittest.TestCase):
                         'custom_metadata_1': 'foo',
                         'custom_metadata_2': datetime.datetime(2019, 6, 6),
                         'deleted_metadata': metadata_base.NO_VALUE,
-                        'digest': 'bc41e654599e31169061ce5f6b99133e6220eea2a83c53f55c653e4d9a4b67e2',
+                        'digest': '9c01b3c98c37fc1dbd3d4293da85ea6c04f651b1ec6d38b906c9d7c8f822ac3b',
                         'dimension': {
                             'length': 1,
                             'name': 'resources',
@@ -727,6 +705,7 @@ class TestDataset(unittest.TestCase):
                         'name': 'Synthetic dataset 1',
                         'schema': 'https://metadata.datadrivendiscovery.org/schemas/v0/container.json',
                         'structural_type': container.Dataset,
+                        'version': '1.0',
                     },
                 },
                 {
@@ -770,7 +749,7 @@ class TestDataset(unittest.TestCase):
         self.maxDiff = None
 
         dataset_path = os.path.abspath(os.path.join(self.test_dir, 'synthetic_dataset_2', 'datasetDoc.json'))
-        dataset_uri = 'file://{dataset_path}'.format(dataset_path=dataset_path)
+        dataset_uri = utils.path_to_uri(dataset_path)
 
         df = container.DataFrame({'col_1': [0], 'col_2': [0.0]}, generate_metadata=True)
         synthetic_dataset = container.Dataset(resources={'learningData': df}, generate_metadata=True)
@@ -779,7 +758,7 @@ class TestDataset(unittest.TestCase):
             synthetic_dataset.save(dataset_uri)
 
         synthetic_dataset.metadata = synthetic_dataset.metadata.update(
-            (), {'id': 'synthetic_dataset_2', 'name': 'Synthetic dataset 2'}
+            (), {'id': 'synthetic_dataset_2', 'name': 'Synthetic dataset 2', 'version': '1.0'}
         )
 
         synthetic_dataset.save(dataset_uri)
@@ -932,7 +911,7 @@ class TestDataset(unittest.TestCase):
         )
 
         dataset_path = os.path.abspath(os.path.join(self.test_dir, 'unknown_columns_1', 'datasetDoc.json'))
-        dataset_uri = 'file://{dataset_path}'.format(dataset_path=dataset_path)
+        dataset_uri = utils.path_to_uri(dataset_path)
 
         df = container.DataFrame([[0, 0.1, 'Iris-setosa']], columns=['d3mIndex', 'sepalLength', 'species'])
         ds = container.Dataset(resources={'learningData': df}, metadata=metadata)
@@ -1072,9 +1051,7 @@ class TestDataset(unittest.TestCase):
             ('learningData', 0, 0),
             {
                 'location_base_uris': [
-                    'file://{dataset_doc_path}'.format(
-                        dataset_doc_path=os.path.join(self.test_dir, 'raw_dataset_1', 'raw') + '/'
-                    )
+                    utils.ensure_uri_ends_with_slash(utils.path_to_uri(os.path.join(self.test_dir, 'raw_dataset_1', 'raw')))
                 ],
                 'media_types': ['text/csv'],
             },
@@ -1084,9 +1061,7 @@ class TestDataset(unittest.TestCase):
             ('learningData', 1, 0),
             {
                 'location_base_uris': [
-                    'file://{dataset_doc_path}'.format(
-                        dataset_doc_path=os.path.join(self.test_dir, 'image_dataset_1', 'media') + '/'
-                    )
+                    utils.ensure_uri_ends_with_slash(utils.path_to_uri(os.path.join(self.test_dir, 'image_dataset_1', 'media')))
                 ],
                 'media_types': ['image/png'],
             },
@@ -1096,9 +1071,7 @@ class TestDataset(unittest.TestCase):
             ('learningData', 2, 0),
             {
                 'location_base_uris': [
-                    'file://{dataset_doc_path}'.format(
-                        dataset_doc_path=os.path.join(self.test_dir, 'image_dataset_2', 'media') + '/'
-                    )
+                    utils.ensure_uri_ends_with_slash(utils.path_to_uri(os.path.join(self.test_dir, 'image_dataset_2', 'media')))
                 ],
                 'media_types': ['image/jpeg'],
             },
@@ -1108,7 +1081,7 @@ class TestDataset(unittest.TestCase):
 
         ds = container.Dataset(resources={'learningData': df}, metadata=metadata)
         data_path = os.path.abspath(os.path.join(self.test_dir, 'multi_source_1', 'datasetDoc.json'))
-        ds.save('file://' + data_path)
+        ds.save(utils.path_to_uri(data_path))
 
         self.assertTrue(os.path.exists(data_path))
         with open(data_path, 'r', encoding='utf') as data_file:
@@ -1140,7 +1113,7 @@ class TestDataset(unittest.TestCase):
         dataset_name = 'Iris Dataset'
 
         ds = container.Dataset.load(
-            'file://{dataset_path}'.format(dataset_path=dataset_path), dataset_id=dataset_id, dataset_name=dataset_name
+            utils.path_to_uri(dataset_path), dataset_id=dataset_id, dataset_name=dataset_name
         )
 
         self._test_csv_with_d3m_index(ds, dataset_path, dataset_id, dataset_name)
@@ -1166,13 +1139,14 @@ class TestDataset(unittest.TestCase):
                 'id': dataset_id,
                 'name': dataset_name,
                 'stored_size': 4961,
-                'location_uris': ['file://localhost{dataset_path}'.format(dataset_path=dataset_path)],
+                'location_uris': [utils.path_to_uri(dataset_path)],
                 'dimension': {
                     'length': 1,
                     'name': 'resources',
                     'semantic_types': ['https://metadata.datadrivendiscovery.org/types/DatasetResource'],
                 },
                 'digest': 'a5e827f2fb60639f1eb7b9bd3b849b0db9c308ba74d0479c20aaeaad77ccda48',
+                'version': '1.0',
             },
             dataset_name,
         )
@@ -1236,7 +1210,7 @@ class TestDataset(unittest.TestCase):
         dataset_name = 'Iris Dataset'
 
         ds = container.Dataset.load(
-            'file://{dataset_path}'.format(dataset_path=dataset_path),
+            utils.path_to_uri(dataset_path),
             dataset_id=dataset_id,
             dataset_name=dataset_name,
             lazy=True,
@@ -1256,7 +1230,8 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': dataset_id,
                 'name': dataset_name,
-                'location_uris': ['file://localhost{dataset_path}'.format(dataset_path=dataset_path)],
+                'version': '1.0',
+                'location_uris': [utils.path_to_uri(dataset_path)],
                 'dimension': {
                     'length': 0,
                     'name': 'resources',
@@ -1302,6 +1277,7 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': '44f6efaa-72e7-383e-9369-64bd7168fb26',
                 'name': 'Iris Dataset',
+                'version': '1.0',
                 'location_uris': [dataset_uri],
                 'description': datasets.load_iris()['DESCR'],
                 'dimension': {
@@ -1436,21 +1412,21 @@ class TestDataset(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'database_dataset_1', 'datasetDoc.json')
         )
 
-        container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
     def test_timeseries(self):
         dataset_doc_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'timeseries_dataset_1', 'datasetDoc.json')
         )
 
-        container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
     def test_audio(self):
         dataset_doc_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'audio_dataset_1', 'datasetDoc.json')
         )
 
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         self.maxDiff = None
 
@@ -1462,7 +1438,7 @@ class TestDataset(unittest.TestCase):
                 'id': 'audio_dataset_1',
                 'version': '4.0.0',
                 'name': 'Audio dataset to be used for tests',
-                'location_uris': ['file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path)],
+                'location_uris': [utils.path_to_uri(dataset_doc_path)],
                 'source': {'license': 'CC0', 'redacted': False},
                 'dimension': {
                     'length': 2,
@@ -1598,7 +1574,7 @@ class TestDataset(unittest.TestCase):
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'raw_dataset_1', 'datasetDoc.json')
         )
 
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         self.assertEqual(
             convert_metadata(ds.metadata.query(())),
@@ -1607,7 +1583,7 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': 'raw_dataset_1',
                 'name': 'Raw dataset to be used for tests',
-                'location_uris': ['file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path)],
+                'location_uris': [utils.path_to_uri(dataset_doc_path)],
                 'dimension': {
                     'name': 'resources',
                     'semantic_types': ['https://metadata.datadrivendiscovery.org/types/DatasetResource'],
@@ -1622,7 +1598,7 @@ class TestDataset(unittest.TestCase):
             convert_metadata(ds.metadata.query(('0', metadata_base.ALL_ELEMENTS, 0))),
             {
                 'location_base_uris': [
-                    'file://{dataset_path}/raw/'.format(dataset_path=os.path.dirname(dataset_doc_path))
+                    utils.ensure_uri_ends_with_slash(utils.path_to_uri(os.path.dirname(dataset_doc_path) + '/raw'))
                 ],
                 'media_types': ['text/csv'],
                 'name': 'filename',
@@ -1639,7 +1615,7 @@ class TestDataset(unittest.TestCase):
         dataset_doc_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), 'data', 'datasets', 'iris_dataset_1', 'datasetDoc.json')
         )
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         # add metadata for rows 0, 1, 2
         ds.metadata = ds.metadata.update(('learningData', 0), {'a': 0})
@@ -1662,7 +1638,7 @@ class TestDataset(unittest.TestCase):
                 os.path.dirname(__file__), 'data', 'datasets', 'score_dataset_1', 'dataset_TEST', 'datasetDoc.json'
             )
         )
-        ds = container.Dataset.load('file://{dataset_doc_path}'.format(dataset_doc_path=dataset_doc_path))
+        ds = container.Dataset.load(utils.path_to_uri(dataset_doc_path))
 
         self.assertEqual(ds.metadata.query_field((), 'id'), 'object_dataset_1_SCORE')
 
@@ -1685,7 +1661,7 @@ class TestDataset(unittest.TestCase):
         dataset_name = 'Database Dataset'
 
         ds = container.Dataset.load(
-            'file://{dataset_path}'.format(dataset_path=dataset_path), dataset_id=dataset_id, dataset_name=dataset_name
+            utils.path_to_uri(dataset_path), dataset_id=dataset_id, dataset_name=dataset_name
         )
 
         self._test_csv_without_d3m_index(ds, dataset_path, dataset_id, dataset_name)
@@ -1711,13 +1687,14 @@ class TestDataset(unittest.TestCase):
                 'id': dataset_id,
                 'name': dataset_name,
                 'stored_size': 1794,
-                'location_uris': ['file://localhost{dataset_path}'.format(dataset_path=dataset_path)],
+                'location_uris': [utils.path_to_uri(dataset_path)],
                 'dimension': {
                     'length': 1,
                     'name': 'resources',
                     'semantic_types': ['https://metadata.datadrivendiscovery.org/types/DatasetResource'],
                 },
                 'digest': 'b22431ee93c7b5fd6405c813bc67bfe6b2e1718eb6080cc50ff90ef6b2812139',
+                'version': '1.0',
             },
             dataset_name,
         )
@@ -1784,7 +1761,7 @@ class TestDataset(unittest.TestCase):
         dataset_name = 'Database Dataset'
 
         ds = container.Dataset.load(
-            'file://{dataset_path}'.format(dataset_path=dataset_path),
+            utils.path_to_uri(dataset_path),
             dataset_id=dataset_id,
             dataset_name=dataset_name,
             lazy=True,
@@ -1804,7 +1781,8 @@ class TestDataset(unittest.TestCase):
                 'structural_type': 'd3m.container.dataset.Dataset',
                 'id': dataset_id,
                 'name': dataset_name,
-                'location_uris': ['file://localhost{dataset_path}'.format(dataset_path=dataset_path)],
+                'version': '1.0',
+                'location_uris': [utils.path_to_uri(dataset_path)],
                 'dimension': {
                     'length': 0,
                     'name': 'resources',
@@ -1830,17 +1808,15 @@ class TestDataset(unittest.TestCase):
         #       See: https://github.com/openml/openml-data/issues/23
         for dataset_id in [8, 17, 61, 42, 46, 373, 41496]:
             dataset_uri = 'https://www.openml.org/d/{dataset_id}'.format(dataset_id=dataset_id)
-            output_dataset_uri = 'file://{dataset_path}'.format(
-                dataset_path=os.path.join(self.test_dir, str(dataset_id), 'datasetDoc.json')
-            )
+            output_dataset_uri = utils.path_to_uri(os.path.join(self.test_dir, str(dataset_id), 'datasetDoc.json'))
 
             ds_1 = dataset.Dataset.load(dataset_uri=dataset_uri, dataset_id=str(dataset_id))
             ds_1.save(dataset_uri=output_dataset_uri)
             ds_2 = dataset.Dataset.load(dataset_uri=output_dataset_uri)
 
-            self._test_openml_compare_loaded(ds_1, ds_2)
+            self._test_openml_compare_loaded(ds_1, ds_2, dataset_id)
 
-    def _test_openml_compare_loaded(self, ds_1, ds_2):
+    def _test_openml_compare_loaded(self, ds_1, ds_2, dataset_id):
         keys_to_remove = ['digest', 'location_uris']
         for metadata_key in keys_to_remove:
             ds_1.metadata = ds_1.metadata.update((), {metadata_key: metadata_base.NO_VALUE})
@@ -1860,7 +1836,7 @@ class TestDataset(unittest.TestCase):
                     (resource_id, metadata_base.ALL_ELEMENTS, column_index), {'structural_type': str}
                 )
 
-        self.assertEqual(ds_1.metadata.to_internal_json_structure(), ds_2.metadata.to_internal_json_structure())
+        self.assertEqual(ds_1.metadata.to_internal_json_structure(), ds_2.metadata.to_internal_json_structure(), dataset_id)
 
     def test_openml_nonlazy(self):
         dataset_id = 61
@@ -1917,6 +1893,7 @@ This is an exceedingly simple domain.
                     'uci',
                 ],
                 'source': {
+                    'citation': 'https://archive.ics.uci.edu/ml/citation_policy.html',
                     'license': 'Public',
                     'name': 'R.A. Fisher',
                     'published': '1936-01-01T00:00:00Z',
@@ -1927,7 +1904,7 @@ This is an exceedingly simple domain.
                     ],
                 },
                 'version': '1',
-                'digest': '3b516a917d2f91d898be96391761e9e4aa7c4817bd45c2a89aace3fd6cc88d10',
+                'digest': 'ee158f7b8e6b570679b1b008b569a08152b144b4de340fa9dd3cdb2ac515bd52',
                 'data_metafeatures': {
                     'dimensionality': float(1 / 30),
                     'kurtosis_of_attributes': {
@@ -1980,8 +1957,6 @@ This is an exceedingly simple domain.
                         'quartile_1': 0.5159859189468406,
                         'quartile_3': 1.5303318469586626,
                     },
-
-
                 },
             },
         )
@@ -2088,6 +2063,19 @@ This is an exceedingly simple domain.
         self.assertFalse(ds.is_lazy())
 
         self._openml_check(ds, dataset_uri)
+
+    def test_byte_conversion_formula(self):
+        x = 270 # In bytes
+        approximateSize = dataset.get_approximate_size(x)
+        self.assertEqual(approximateSize, '270 B')
+
+        x = 777 # In bytes
+        approximateSize = dataset.get_approximate_size(x)
+        self.assertEqual(approximateSize, '777 B')
+
+        x = 1000 # In bytes
+        approximateSize = dataset.get_approximate_size(x)
+        self.assertEqual(approximateSize, '1 KB')
 
 
 if __name__ == '__main__':

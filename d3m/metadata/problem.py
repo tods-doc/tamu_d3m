@@ -1,12 +1,15 @@
 import abc
 import argparse
 import copy
-import functools
 import json
 import logging
+import pathlib
+
 import math
 import os.path
 import pprint
+import re
+import requests
 import sys
 import traceback
 import typing
@@ -14,12 +17,6 @@ from urllib import parse as url_parse
 
 from . import base
 from d3m import deprecate, exceptions, utils
-
-# See: https://gitlab.com/datadrivendiscovery/d3m/issues/66
-try:
-    from pyarrow import lib as pyarrow_lib  # type: ignore
-except ModuleNotFoundError:
-    pyarrow_lib = None
 
 __all__ = ('TaskKeyword', 'PerformanceMetric', 'Problem')
 
@@ -134,47 +131,48 @@ TaskKeyword = utils.create_enum_from_json_schema_enum(
 )
 
 TaskKeyword._d3m_map.update({
-    'classification': TaskKeyword.CLASSIFICATION,  # type: ignore
-    'regression': TaskKeyword.REGRESSION,  # type: ignore
-    'clustering': TaskKeyword.CLUSTERING,  # type: ignore
-    'linkPrediction': TaskKeyword.LINK_PREDICTION,  # type: ignore
-    'vertexNomination': TaskKeyword.VERTEX_NOMINATION,  # type: ignore
-    'vertexClassification': TaskKeyword.VERTEX_CLASSIFICATION,  # type: ignore
-    'communityDetection': TaskKeyword.COMMUNITY_DETECTION,  # type: ignore
-    'graphMatching': TaskKeyword.GRAPH_MATCHING,  # type: ignore
-    'forecasting': TaskKeyword.FORECASTING,  # type: ignore
-    'collaborativeFiltering': TaskKeyword.COLLABORATIVE_FILTERING,  # type: ignore
-    'objectDetection': TaskKeyword.OBJECT_DETECTION,  # type: ignore
-    'semiSupervised': TaskKeyword.SEMISUPERVISED,  # type: ignore
-    'binary': TaskKeyword.BINARY,  # type: ignore
-    'multiClass': TaskKeyword.MULTICLASS,  # type: ignore
-    'multiLabel': TaskKeyword.MULTILABEL,  # type: ignore
-    'univariate': TaskKeyword.UNIVARIATE,  # type: ignore
-    'multivariate': TaskKeyword.MULTIVARIATE,  # type: ignore
-    'overlapping': TaskKeyword.OVERLAPPING,  # type: ignore
-    'nonOverlapping': TaskKeyword.NONOVERLAPPING,  # type: ignore
-    'tabular': TaskKeyword.TABULAR,  # type: ignore
-    'relational': TaskKeyword.RELATIONAL,  # type: ignore
-    'nested': TaskKeyword.NESTED,  # type: ignore
-    'image': TaskKeyword.IMAGE,  # type: ignore
-    'audio': TaskKeyword.AUDIO,  # type: ignore
-    'video': TaskKeyword.VIDEO,  # type: ignore
-    'speech': TaskKeyword.SPEECH,  # type: ignore
-    'text': TaskKeyword.TEXT,  # type: ignore
-    'graph': TaskKeyword.GRAPH,  # type: ignore
-    'multiGraph': TaskKeyword.MULTIGRAPH,  # type: ignore
-    'timeSeries': TaskKeyword.TIME_SERIES,  # type: ignore
-    'grouped': TaskKeyword.GROUPED,  # type: ignore
-    'geospatial': TaskKeyword.GEOSPATIAL,  # type: ignore
-    'remoteSensing': TaskKeyword.REMOTE_SENSING,  # type: ignore
-    'lupi': TaskKeyword.LUPI,  # type: ignore
-    'missingMetadata': TaskKeyword.MISSING_METADATA,  # type: ignore
+    'classification': TaskKeyword.CLASSIFICATION,
+    'regression': TaskKeyword.REGRESSION,
+    'clustering': TaskKeyword.CLUSTERING,
+    'linkPrediction': TaskKeyword.LINK_PREDICTION,
+    'vertexNomination': TaskKeyword.VERTEX_NOMINATION,
+    'vertexClassification': TaskKeyword.VERTEX_CLASSIFICATION,
+    'communityDetection': TaskKeyword.COMMUNITY_DETECTION,
+    'graphMatching': TaskKeyword.GRAPH_MATCHING,
+    'forecasting': TaskKeyword.FORECASTING,
+    'collaborativeFiltering': TaskKeyword.COLLABORATIVE_FILTERING,
+    'objectDetection': TaskKeyword.OBJECT_DETECTION,
+    'semiSupervised': TaskKeyword.SEMISUPERVISED,
+    'binary': TaskKeyword.BINARY,
+    'multiClass': TaskKeyword.MULTICLASS,
+    'multiLabel': TaskKeyword.MULTILABEL,
+    'univariate': TaskKeyword.UNIVARIATE,
+    'multivariate': TaskKeyword.MULTIVARIATE,
+    'overlapping': TaskKeyword.OVERLAPPING,
+    'nonOverlapping': TaskKeyword.NONOVERLAPPING,
+    'tabular': TaskKeyword.TABULAR,
+    'relational': TaskKeyword.RELATIONAL,
+    'nested': TaskKeyword.NESTED,
+    'image': TaskKeyword.IMAGE,
+    'audio': TaskKeyword.AUDIO,
+    'video': TaskKeyword.VIDEO,
+    'speech': TaskKeyword.SPEECH,
+    'text': TaskKeyword.TEXT,
+    'graph': TaskKeyword.GRAPH,
+    'multiGraph': TaskKeyword.MULTIGRAPH,
+    'timeSeries': TaskKeyword.TIME_SERIES,
+    'grouped': TaskKeyword.GROUPED,
+    'geospatial': TaskKeyword.GEOSPATIAL,
+    'remoteSensing': TaskKeyword.REMOTE_SENSING,
+    'lupi': TaskKeyword.LUPI,
+    'missingMetadata': TaskKeyword.MISSING_METADATA,
+    'multipleInstanceLearning': TaskKeyword.MULTIPLE_INSTANCE_LEARNING,
 })
 
 
 class PerformanceMetricBase:
     _d3m_map: typing.ClassVar[typing.Dict[str, 'PerformanceMetricBase']] = {}
-    _requires_confidence_set: typing.ClassVar[typing.Set['PerformanceMetricBase']] = set()
+    _requires_score_set: typing.ClassVar[typing.Set['PerformanceMetricBase']] = set()
     _requires_rank_set: typing.ClassVar[typing.Set['PerformanceMetricBase']] = set()
     _best_value_map: typing.ClassVar[typing.Dict['PerformanceMetricBase', float]] = {}
     _worst_value_map: typing.ClassVar[typing.Dict['PerformanceMetricBase', float]] = {}
@@ -224,16 +222,16 @@ class PerformanceMetricBase:
 
         raise exceptions.InvalidStateError("Cannot convert {self}.".format(self=self))
 
-    def requires_confidence(self) -> bool:
+    def requires_score(self) -> bool:
         """
-        Returns ``True`` if this metric requires confidence column.
+        Returns ``True`` if this metric requires score column.
 
         Returns
         -------
-        ``True`` if this metric requires confidence column.
+        ``True`` if this metric requires score column.
         """
 
-        return self in self._requires_confidence_set
+        return self in self._requires_score_set
 
     def requires_rank(self) -> bool:
         """
@@ -328,22 +326,22 @@ class PerformanceMetricBase:
         from d3m import metrics
 
         if self in metrics.class_map:
-            return metrics.class_map[self]  # type: ignore
+            return metrics.class_map[self]
 
         if self in self._additional_score_class_map:
-            return self._additional_score_class_map[self]  # type: ignore
+            return self._additional_score_class_map[self]
 
         raise exceptions.NotSupportedError("Computing metric {metric} is not supported.".format(metric=self))
 
     @classmethod
-    def register_metric(cls, name: str, *, best_value: float, worst_value: float, score_class: type, requires_confidence: bool = False, requires_rank: bool = False) -> None:
+    def register_metric(cls, name: str, *, best_value: float, worst_value: float, score_class: type, requires_score: bool = False, requires_rank: bool = False) -> None:
         cls.register_value(name, name)  # type: ignore
         cls._best_value_map[cls[name]] = best_value  # type: ignore
         cls._worst_value_map[cls[name]] = worst_value  # type: ignore
         cls._additional_score_class_map[cls[name]] = score_class  # type: ignore
 
-        if requires_confidence:
-            PerformanceMetric._requires_confidence_set.add(cls[name])  # type: ignore
+        if requires_score:
+            PerformanceMetric._requires_score_set.add(cls[name])  # type: ignore
 
         if requires_rank:
             PerformanceMetric._requires_rank_set.add(cls[name])  # type: ignore
@@ -356,28 +354,28 @@ PerformanceMetric = utils.create_enum_from_json_schema_enum(
 )
 
 PerformanceMetric._d3m_map.update({
-    'accuracy': PerformanceMetric.ACCURACY,  # type: ignore
-    'precision': PerformanceMetric.PRECISION,  # type: ignore
-    'recall': PerformanceMetric.RECALL,  # type: ignore
-    'f1': PerformanceMetric.F1,  # type: ignore
-    'f1Micro': PerformanceMetric.F1_MICRO,  # type: ignore
-    'f1Macro': PerformanceMetric.F1_MACRO,  # type: ignore
-    'rocAuc': PerformanceMetric.ROC_AUC,  # type: ignore
-    'rocAucMicro': PerformanceMetric.ROC_AUC_MICRO,  # type: ignore
-    'rocAucMacro': PerformanceMetric.ROC_AUC_MACRO,  # type: ignore
-    'meanSquaredError': PerformanceMetric.MEAN_SQUARED_ERROR,  # type: ignore
-    'rootMeanSquaredError': PerformanceMetric.ROOT_MEAN_SQUARED_ERROR,  # type: ignore
-    'meanAbsoluteError': PerformanceMetric.MEAN_ABSOLUTE_ERROR,  # type: ignore
-    'rSquared': PerformanceMetric.R_SQUARED,  # type: ignore
-    'normalizedMutualInformation': PerformanceMetric.NORMALIZED_MUTUAL_INFORMATION,  # type: ignore
-    'jaccardSimilarityScore': PerformanceMetric.JACCARD_SIMILARITY_SCORE,  # type: ignore
-    'precisionAtTopK': PerformanceMetric.PRECISION_AT_TOP_K,  # type: ignore
-    'objectDetectionAP': PerformanceMetric.OBJECT_DETECTION_AVERAGE_PRECISION,  # type: ignore
-    'hammingLoss': PerformanceMetric.HAMMING_LOSS,  # type: ignore
-    'meanReciprocalRank': PerformanceMetric.MEAN_RECIPROCAL_RANK,  # type: ignore
-    'hitsAtK': PerformanceMetric.HITS_AT_K,  # type: ignore
+    'accuracy': PerformanceMetric.ACCURACY,
+    'precision': PerformanceMetric.PRECISION,
+    'recall': PerformanceMetric.RECALL,
+    'f1': PerformanceMetric.F1,
+    'f1Micro': PerformanceMetric.F1_MICRO,
+    'f1Macro': PerformanceMetric.F1_MACRO,
+    'rocAuc': PerformanceMetric.ROC_AUC,
+    'rocAucMicro': PerformanceMetric.ROC_AUC_MICRO,
+    'rocAucMacro': PerformanceMetric.ROC_AUC_MACRO,
+    'meanSquaredError': PerformanceMetric.MEAN_SQUARED_ERROR,
+    'rootMeanSquaredError': PerformanceMetric.ROOT_MEAN_SQUARED_ERROR,
+    'meanAbsoluteError': PerformanceMetric.MEAN_ABSOLUTE_ERROR,
+    'rSquared': PerformanceMetric.R_SQUARED,
+    'normalizedMutualInformation': PerformanceMetric.NORMALIZED_MUTUAL_INFORMATION,
+    'jaccardSimilarityScore': PerformanceMetric.JACCARD_SIMILARITY_SCORE,
+    'precisionAtTopK': PerformanceMetric.PRECISION_AT_TOP_K,
+    'objectDetectionAP': PerformanceMetric.OBJECT_DETECTION_AVERAGE_PRECISION,
+    'hammingLoss': PerformanceMetric.HAMMING_LOSS,
+    'meanReciprocalRank': PerformanceMetric.MEAN_RECIPROCAL_RANK,
+    'hitsAtK': PerformanceMetric.HITS_AT_K,
 })
-PerformanceMetric._requires_confidence_set.update({
+PerformanceMetric._requires_score_set.update({
     PerformanceMetric.ROC_AUC,
     PerformanceMetric.ROC_AUC_MICRO,
     PerformanceMetric.ROC_AUC_MACRO,
@@ -388,96 +386,96 @@ PerformanceMetric._requires_rank_set.update({
     PerformanceMetric.HITS_AT_K,
 })
 PerformanceMetric._best_value_map.update({
-    PerformanceMetric.ACCURACY: 1.0,  # type: ignore
-    PerformanceMetric.PRECISION: 1.0,  # type: ignore
-    PerformanceMetric.RECALL: 1.0,  # type: ignore
-    PerformanceMetric.F1: 1.0,  # type: ignore
-    PerformanceMetric.F1_MICRO: 1.0,  # type: ignore
-    PerformanceMetric.F1_MACRO: 1.0,  # type: ignore
-    PerformanceMetric.ROC_AUC: 1.0,  # type: ignore
-    PerformanceMetric.ROC_AUC_MICRO: 1.0,  # type: ignore
-    PerformanceMetric.ROC_AUC_MACRO: 1.0,  # type: ignore
-    PerformanceMetric.MEAN_SQUARED_ERROR: 0.0,  # type: ignore
-    PerformanceMetric.ROOT_MEAN_SQUARED_ERROR: 0.0,  # type: ignore
-    PerformanceMetric.MEAN_ABSOLUTE_ERROR: 0.0,  # type: ignore
-    PerformanceMetric.R_SQUARED: 1.0,  # type: ignore
-    PerformanceMetric.NORMALIZED_MUTUAL_INFORMATION: 1.0,  # type: ignore
-    PerformanceMetric.JACCARD_SIMILARITY_SCORE: 1.0,  # type: ignore
-    PerformanceMetric.PRECISION_AT_TOP_K: 1.0,  # type: ignore
-    PerformanceMetric.OBJECT_DETECTION_AVERAGE_PRECISION: 1.0,  # type: ignore
-    PerformanceMetric.HAMMING_LOSS: 0.0,  # type: ignore
-    PerformanceMetric.MEAN_RECIPROCAL_RANK: 1.0,  # type: ignore
-    PerformanceMetric.HITS_AT_K: 1.0,  # type: ignore
+    PerformanceMetric.ACCURACY: 1.0,
+    PerformanceMetric.PRECISION: 1.0,
+    PerformanceMetric.RECALL: 1.0,
+    PerformanceMetric.F1: 1.0,
+    PerformanceMetric.F1_MICRO: 1.0,
+    PerformanceMetric.F1_MACRO: 1.0,
+    PerformanceMetric.ROC_AUC: 1.0,
+    PerformanceMetric.ROC_AUC_MICRO: 1.0,
+    PerformanceMetric.ROC_AUC_MACRO: 1.0,
+    PerformanceMetric.MEAN_SQUARED_ERROR: 0.0,
+    PerformanceMetric.ROOT_MEAN_SQUARED_ERROR: 0.0,
+    PerformanceMetric.MEAN_ABSOLUTE_ERROR: 0.0,
+    PerformanceMetric.R_SQUARED: 1.0,
+    PerformanceMetric.NORMALIZED_MUTUAL_INFORMATION: 1.0,
+    PerformanceMetric.JACCARD_SIMILARITY_SCORE: 1.0,
+    PerformanceMetric.PRECISION_AT_TOP_K: 1.0,
+    PerformanceMetric.OBJECT_DETECTION_AVERAGE_PRECISION: 1.0,
+    PerformanceMetric.HAMMING_LOSS: 0.0,
+    PerformanceMetric.MEAN_RECIPROCAL_RANK: 1.0,
+    PerformanceMetric.HITS_AT_K: 1.0,
 })
 PerformanceMetric._worst_value_map.update({
-    PerformanceMetric.ACCURACY: 0.0,  # type: ignore
-    PerformanceMetric.PRECISION: 0.0,  # type: ignore
-    PerformanceMetric.RECALL: 0.0,  # type: ignore
-    PerformanceMetric.F1: 0.0,  # type: ignore
-    PerformanceMetric.F1_MICRO: 0.0,  # type: ignore
-    PerformanceMetric.F1_MACRO: 0.0,  # type: ignore
-    PerformanceMetric.ROC_AUC: 0.0,  # type: ignore
-    PerformanceMetric.ROC_AUC_MICRO: 0.0,  # type: ignore
-    PerformanceMetric.ROC_AUC_MACRO: 0.0,  # type: ignore
-    PerformanceMetric.MEAN_SQUARED_ERROR: float('inf'),  # type: ignore
-    PerformanceMetric.ROOT_MEAN_SQUARED_ERROR: float('inf'),  # type: ignore
-    PerformanceMetric.MEAN_ABSOLUTE_ERROR: float('inf'),  # type: ignore
-    PerformanceMetric.R_SQUARED: float('-inf'),  # type: ignore
-    PerformanceMetric.NORMALIZED_MUTUAL_INFORMATION: 0.0,  # type: ignore
-    PerformanceMetric.JACCARD_SIMILARITY_SCORE: 0.0,  # type: ignore
-    PerformanceMetric.PRECISION_AT_TOP_K: 0.0,  # type: ignore
-    PerformanceMetric.OBJECT_DETECTION_AVERAGE_PRECISION: 0.0,  # type: ignore
-    PerformanceMetric.HAMMING_LOSS: 1.0,  # type: ignore
-    PerformanceMetric.MEAN_RECIPROCAL_RANK: 0.0,  # type: ignore
-    PerformanceMetric.HITS_AT_K: 0.0,  # type: ignore
+    PerformanceMetric.ACCURACY: 0.0,
+    PerformanceMetric.PRECISION: 0.0,
+    PerformanceMetric.RECALL: 0.0,
+    PerformanceMetric.F1: 0.0,
+    PerformanceMetric.F1_MICRO: 0.0,
+    PerformanceMetric.F1_MACRO: 0.0,
+    PerformanceMetric.ROC_AUC: 0.0,
+    PerformanceMetric.ROC_AUC_MICRO: 0.0,
+    PerformanceMetric.ROC_AUC_MACRO: 0.0,
+    PerformanceMetric.MEAN_SQUARED_ERROR: float('inf'),
+    PerformanceMetric.ROOT_MEAN_SQUARED_ERROR: float('inf'),
+    PerformanceMetric.MEAN_ABSOLUTE_ERROR: float('inf'),
+    PerformanceMetric.R_SQUARED: float('-inf'),
+    PerformanceMetric.NORMALIZED_MUTUAL_INFORMATION: 0.0,
+    PerformanceMetric.JACCARD_SIMILARITY_SCORE: 0.0,
+    PerformanceMetric.PRECISION_AT_TOP_K: 0.0,
+    PerformanceMetric.OBJECT_DETECTION_AVERAGE_PRECISION: 0.0,
+    PerformanceMetric.HAMMING_LOSS: 1.0,
+    PerformanceMetric.MEAN_RECIPROCAL_RANK: 0.0,
+    PerformanceMetric.HITS_AT_K: 0.0,
 })
 
 # Here are all legacy (before v4.0.0) task types and task subtypes mapped to task keywords.
 TASK_TYPE_TO_KEYWORDS_MAP: typing.Dict[typing.Optional[str], typing.List] = {
     None: [],
-    'classification': [TaskKeyword.CLASSIFICATION],  # type: ignore
-    'regression': [TaskKeyword.REGRESSION],  # type: ignore
-    'clustering': [TaskKeyword.CLUSTERING],  # type: ignore
-    'linkPrediction': [TaskKeyword.LINK_PREDICTION],  # type: ignore
-    'vertexClassification': [TaskKeyword.VERTEX_CLASSIFICATION],  # type: ignore
-    'vertexNomination': [TaskKeyword.VERTEX_NOMINATION],  # type: ignore
-    'communityDetection': [TaskKeyword.COMMUNITY_DETECTION],  # type: ignore
-    'graphMatching': [TaskKeyword.GRAPH_MATCHING],  # type: ignore
-    'timeSeriesForecasting': [TaskKeyword.TIME_SERIES, TaskKeyword.FORECASTING],  # type: ignore
-    'collaborativeFiltering': [TaskKeyword.COLLABORATIVE_FILTERING],  # type: ignore
-    'objectDetection': [TaskKeyword.OBJECT_DETECTION],  # type: ignore
-    'semiSupervisedClassification': [TaskKeyword.SEMISUPERVISED, TaskKeyword.CLASSIFICATION],  # type: ignore
-    'semiSupervisedRegression': [TaskKeyword.SEMISUPERVISED, TaskKeyword.REGRESSION],  # type: ignore
-    'binary': [TaskKeyword.BINARY],  # type: ignore
-    'multiClass': [TaskKeyword.MULTICLASS],  # type: ignore
-    'multiLabel': [TaskKeyword.MULTILABEL],  # type: ignore
-    'univariate': [TaskKeyword.UNIVARIATE],  # type: ignore
-    'multivariate': [TaskKeyword.MULTIVARIATE],  # type: ignore
-    'overlapping': [TaskKeyword.OVERLAPPING],  # type: ignore
-    'nonOverlapping': [TaskKeyword.NONOVERLAPPING],  # type: ignore
+    'classification': [TaskKeyword.CLASSIFICATION],
+    'regression': [TaskKeyword.REGRESSION],
+    'clustering': [TaskKeyword.CLUSTERING],
+    'linkPrediction': [TaskKeyword.LINK_PREDICTION],
+    'vertexClassification': [TaskKeyword.VERTEX_CLASSIFICATION],
+    'vertexNomination': [TaskKeyword.VERTEX_NOMINATION],
+    'communityDetection': [TaskKeyword.COMMUNITY_DETECTION],
+    'graphMatching': [TaskKeyword.GRAPH_MATCHING],
+    'timeSeriesForecasting': [TaskKeyword.TIME_SERIES, TaskKeyword.FORECASTING],
+    'collaborativeFiltering': [TaskKeyword.COLLABORATIVE_FILTERING],
+    'objectDetection': [TaskKeyword.OBJECT_DETECTION],
+    'semiSupervisedClassification': [TaskKeyword.SEMISUPERVISED, TaskKeyword.CLASSIFICATION],
+    'semiSupervisedRegression': [TaskKeyword.SEMISUPERVISED, TaskKeyword.REGRESSION],
+    'binary': [TaskKeyword.BINARY],
+    'multiClass': [TaskKeyword.MULTICLASS],
+    'multiLabel': [TaskKeyword.MULTILABEL],
+    'univariate': [TaskKeyword.UNIVARIATE],
+    'multivariate': [TaskKeyword.MULTIVARIATE],
+    'overlapping': [TaskKeyword.OVERLAPPING],
+    'nonOverlapping': [TaskKeyword.NONOVERLAPPING],
 }
 JSON_TASK_TYPE_TO_KEYWORDS_MAP: typing.Dict[typing.Optional[str], typing.List] = {
     None: [],
-    'CLASSIFICATION': [TaskKeyword.CLASSIFICATION],  # type: ignore
-    'REGRESSION': [TaskKeyword.REGRESSION],  # type: ignore
-    'CLUSTERING': [TaskKeyword.CLUSTERING],  # type: ignore
-    'LINK_PREDICTION': [TaskKeyword.LINK_PREDICTION],  # type: ignore
-    'VERTEX_CLASSIFICATION': [TaskKeyword.VERTEX_CLASSIFICATION],  # type: ignore
-    'VERTEX_NOMINATION': [TaskKeyword.VERTEX_NOMINATION],  # type: ignore
-    'COMMUNITY_DETECTION': [TaskKeyword.COMMUNITY_DETECTION],  # type: ignore
-    'GRAPH_MATCHING': [TaskKeyword.GRAPH_MATCHING],  # type: ignore
-    'TIME_SERIES_FORECASTING': [TaskKeyword.TIME_SERIES, TaskKeyword.FORECASTING],  # type: ignore
-    'COLLABORATIVE_FILTERING': [TaskKeyword.COLLABORATIVE_FILTERING],  # type: ignore
-    'OBJECT_DETECTION': [TaskKeyword.OBJECT_DETECTION],  # type: ignore
-    'SEMISUPERVISED_CLASSIFICATION': [TaskKeyword.SEMISUPERVISED, TaskKeyword.CLASSIFICATION],  # type: ignore
-    'SEMISUPERVISED_REGRESSION': [TaskKeyword.SEMISUPERVISED, TaskKeyword.REGRESSION],  # type: ignore
-    'BINARY': [TaskKeyword.BINARY],  # type: ignore
-    'MULTICLASS': [TaskKeyword.MULTICLASS],  # type: ignore
-    'MULTILABEL': [TaskKeyword.MULTILABEL],  # type: ignore
-    'UNIVARIATE': [TaskKeyword.UNIVARIATE],  # type: ignore
-    'MULTIVARIATE': [TaskKeyword.MULTIVARIATE],  # type: ignore
-    'OVERLAPPING': [TaskKeyword.OVERLAPPING],  # type: ignore
-    'NONOVERLAPPING': [TaskKeyword.NONOVERLAPPING],  # type: ignore
+    'CLASSIFICATION': [TaskKeyword.CLASSIFICATION],
+    'REGRESSION': [TaskKeyword.REGRESSION],
+    'CLUSTERING': [TaskKeyword.CLUSTERING],
+    'LINK_PREDICTION': [TaskKeyword.LINK_PREDICTION],
+    'VERTEX_CLASSIFICATION': [TaskKeyword.VERTEX_CLASSIFICATION],
+    'VERTEX_NOMINATION': [TaskKeyword.VERTEX_NOMINATION],
+    'COMMUNITY_DETECTION': [TaskKeyword.COMMUNITY_DETECTION],
+    'GRAPH_MATCHING': [TaskKeyword.GRAPH_MATCHING],
+    'TIME_SERIES_FORECASTING': [TaskKeyword.TIME_SERIES, TaskKeyword.FORECASTING],
+    'COLLABORATIVE_FILTERING': [TaskKeyword.COLLABORATIVE_FILTERING],
+    'OBJECT_DETECTION': [TaskKeyword.OBJECT_DETECTION],
+    'SEMISUPERVISED_CLASSIFICATION': [TaskKeyword.SEMISUPERVISED, TaskKeyword.CLASSIFICATION],
+    'SEMISUPERVISED_REGRESSION': [TaskKeyword.SEMISUPERVISED, TaskKeyword.REGRESSION],
+    'BINARY': [TaskKeyword.BINARY],
+    'MULTICLASS': [TaskKeyword.MULTICLASS],
+    'MULTILABEL': [TaskKeyword.MULTILABEL],
+    'UNIVARIATE': [TaskKeyword.UNIVARIATE],
+    'MULTIVARIATE': [TaskKeyword.MULTIVARIATE],
+    'OVERLAPPING': [TaskKeyword.OVERLAPPING],
+    'NONOVERLAPPING': [TaskKeyword.NONOVERLAPPING],
 }
 
 
@@ -533,6 +531,40 @@ class Loader(metaclass=utils.AbstractMetaclass):
         return Problem
 
 
+class Saver(metaclass=utils.AbstractMetaclass):
+    """
+    A base class for problem savers.
+    """
+
+    @abc.abstractmethod
+    def can_save(self, problem_uri: str) -> bool:
+        """
+        Return ``True`` if this saver can save a problem to a given URI ``problem_uri``.
+
+        Parameters
+        ----------
+        problem_uri:
+            A URI to save a problem to.
+
+        Returns
+        -------
+        ``True`` if this saver can save a problem to ``problem_uri``.
+        """
+
+    @abc.abstractmethod
+    def save(self, problem: 'Problem', problem_uri: str) -> None:
+        """
+        Saves the dataset ``dataset`` to ``dataset_uri``.
+
+        Parameters
+        ----------
+        problem:
+            A problem to save.
+        problem_uri:
+            A URI to save to.
+        """
+
+
 class D3MProblemLoader(Loader):
     """
     A class for loading of D3M problems.
@@ -541,24 +573,15 @@ class D3MProblemLoader(Loader):
     URI should point to the ``problemDoc.json`` file in the D3M problem directory.
     """
 
-    SUPPORTED_VERSIONS = {'3.0', '3.1', '3.1.1', '3.1.2', '3.2.0', '3.2.1', '3.3.0', '3.3.1', '4.0.0', '4.1.0'}
+    SUPPORTED_VERSIONS = {'3.0', '3.1', '3.1.1', '3.1.2', '3.2.0', '3.2.1', '3.3.0', '3.3.1', '4.0.0', '4.1.0', '4.1.1'}
 
-    def can_load(self, dataset_uri: str) -> bool:
+    def can_load(self, problem_uri: str) -> bool:
         try:
-            parsed_uri = url_parse.urlparse(dataset_uri, allow_fragments=False)
-        except Exception:
+            path = utils.uri_to_path(problem_uri)
+        except exceptions.InvalidArgumentValueError:
             return False
 
-        if parsed_uri.scheme != 'file':
-            return False
-
-        if parsed_uri.netloc not in ['', 'localhost']:
-            return False
-
-        if not parsed_uri.path.startswith('/'):
-            return False
-
-        if os.path.basename(parsed_uri.path) != 'problemDoc.json':
+        if path.name != 'problemDoc.json':
             return False
 
         return True
@@ -568,9 +591,7 @@ class D3MProblemLoader(Loader):
              problem_name: str = None, strict_digest: bool = False, handle_score_split: bool = True) -> 'Problem':
         assert self.can_load(problem_uri)
 
-        parsed_uri = url_parse.urlparse(problem_uri, allow_fragments=False)
-
-        problem_doc_path = parsed_uri.path
+        problem_doc_path = pathlib.Path(utils.uri_to_path(problem_uri))
 
         try:
             with open(problem_doc_path, 'r', encoding='utf8') as problem_doc_file:
@@ -657,7 +678,7 @@ class D3MProblemLoader(Loader):
         # SCORE dataset splits have targets as part of data. Because of this we also update
         # corresponding problem ID.
         # See: https://gitlab.com/datadrivendiscovery/d3m/issues/176
-        if handle_score_split and os.path.exists(os.path.join(os.path.dirname(problem_doc_path), '..', 'targets.csv')) and document_problem_id.endswith('_TEST'):
+        if handle_score_split and (problem_doc_path.parent / '..' / 'targets.csv').exists() and document_problem_id.endswith('_TEST'):
             document_problem_id = document_problem_id[:-5] + '_SCORE'
 
             # Also update dataset references.
@@ -667,14 +688,14 @@ class D3MProblemLoader(Loader):
 
         # "dataSplits" is not exposed as a problem description. One should provide splitting
         # configuration to a splitting pipeline instead. Similarly, "outputs" are not exposed either.
-        description = {
+        description: typing.Dict[str, typing.Any] = {
             'schema': PROBLEM_SCHEMA_VERSION,
             'id': problem_id or document_problem_id,
             'version': problem_version or problem_doc['about'].get('problemVersion', '1.0'),
             'name': problem_name or problem_doc['about']['problemName'],
             'location_uris': [
                 # We reconstruct the URI to normalize it.
-                utils.fix_uri(problem_doc_path),
+                utils.path_to_uri(problem_doc_path),
             ],
             'problem': {},
         }
@@ -690,19 +711,24 @@ class D3MProblemLoader(Loader):
                 task_keywords.append(TaskKeyword.parse(task_keyword))
 
         if task_keywords:
-            description['problem']['task_keywords'] = sorted(set(task_keywords))  # type: ignore
+            description['problem']['task_keywords'] = sorted(set(task_keywords))
 
         if performance_metrics:
-            description['problem']['performance_metrics'] = performance_metrics  # type: ignore
+            description['problem']['performance_metrics'] = performance_metrics
 
         if problem_doc['about'].get('problemDescription', None):
-            description['description'] = problem_doc['about']['problemDescription']  # type: ignore
+            description['description'] = problem_doc['about']['problemDescription']
 
         if problem_doc['about'].get('problemURI', None):
             typing.cast(typing.List[str], description['location_uris']).append(problem_doc['about']['problemURI'])
 
+        if problem_doc['about'].get('sourceURI', None):
+            description['source'] = {
+                'uris': [problem_doc['about']['sourceURI']],
+            }
+
         if inputs:
-            description['inputs'] = inputs  # type: ignore
+            description['inputs'] = inputs
 
         if 'dataAugmentation' in problem_doc:
             description['data_augmentation'] = problem_doc['dataAugmentation']
@@ -716,6 +742,383 @@ class D3MProblemLoader(Loader):
         return problem_class(description)
 
 
+class D3MProblemSaver(Saver):
+    """
+    A class for saving of D3M problems.
+
+    This saver supports only saving to local file system.
+    URI should point to the ``problemDoc.json`` file in the D3M dataset directory.
+    """
+
+    VERSION = '4.1.1'
+
+    def can_save(self, problem_uri: str) -> bool:
+        if not self._is_problem(problem_uri):
+            return False
+
+        if not self._is_local_file(problem_uri):
+            return False
+
+        return True
+
+    def _is_problem(self, uri: str) -> bool:
+        try:
+            parsed_uri = url_parse.urlparse(uri, allow_fragments=False)
+        except Exception:
+            return False
+
+        parsed_uri_path = pathlib.PurePosixPath(url_parse.unquote(parsed_uri.path))
+
+        if parsed_uri_path.name != 'problemDoc.json':
+            return False
+
+        return True
+
+    def _is_local_file(self, uri: str) -> bool:
+        try:
+            utils.uri_to_path(uri)
+        except exceptions.InvalidArgumentValueError:
+            return False
+
+        return True
+
+    def save(self, problem: 'Problem', problem_uri: str) -> None:
+        # Sanity check
+        assert self.can_save(problem_uri)
+
+        problem_path = utils.uri_to_path(problem_uri).parent
+        os.makedirs(problem_path, 0o755, exist_ok=False)
+
+        required_fields = ['id', 'name', 'version']
+        for field in required_fields:
+            if not problem.get(field, None):
+                exceptions.InvalidProblemError(f"Problem field '{field}' is required when saving.")
+
+        about = {
+            'problemID': problem['id'],
+            'problemName': problem['name'],
+            'problemVersion': problem['version'],
+            'problemSchemaVersion': self.VERSION,
+        }
+
+        if 'description' in problem:
+            about['problemDescription'] = problem['description']
+
+        remote_location_uris = [location_uri for location_uri in problem.get('location_uris', []) if not self._is_local_file(location_uri)]
+        if remote_location_uris:
+            # We are only using the first URI due to design of D3M problem format.
+            about['problemURI'] = remote_location_uris[0]
+
+        remote_source_uris = [source_uri for source_uri in problem.get('source', {}).get('uris', []) if not self._is_local_file(source_uri)]
+        if remote_source_uris:
+            # We are only using the first URI due to design of D3M problem format.
+            about['sourceURI'] = remote_source_uris[0]
+
+        if 'data_augmentation' in problem:
+            about['dataAugmentation'] = problem['data_augmentation']
+
+        performance_metrics = []
+        if 'problem' not in problem:
+            exceptions.InvalidProblemError(f"Problem field 'problem.task_keywords' is required when saving.")
+
+        if 'task_keywords' not in problem['problem']:
+            exceptions.InvalidProblemError(f"Problem field 'problem.task_keywords' is required when saving.")
+
+        about['taskKeywords'] = []
+        for task_keyword in problem['problem']['task_keywords']:
+            try:
+                about['taskKeywords'].append(task_keyword.unparse())
+            except exceptions.InvalidStateError:
+                logger.warning(
+                    "D3M problem format does not support keyword '%(task_keyword)', skipping it.",
+                    {
+                        'task_keyword': task_keyword,
+                    },
+                )
+
+        for performance_metric in problem['problem'].get('performance_metrics', []):
+            params = {}
+
+            if 'pos_label' in performance_metric:
+                params['posLabel'] = performance_metric['pos_label']
+
+            if 'K' in performance_metric:
+                params['k'] = performance_metric['K']
+
+            try:
+                params['metric'] = performance_metric['metric'].unparse()
+                performance_metrics.append(params)
+            except exceptions.InvalidStateError:
+                logger.warning(
+                    "D3M problem format does not support metric '%(metric)', skipping it.",
+                    {
+                        'metric': performance_metric['metric'],
+                    },
+                )
+
+        data = []
+        for problem_input in problem['inputs']:
+            _input = {
+                'datasetID': problem_input['dataset_id'],
+            }
+
+            targets = []
+            for target in problem_input['targets']:
+                _target = {
+                    'targetIndex': target['target_index'],
+                    'resID': target['resource_id'],
+                    'colIndex': target['column_index'],
+                    'colName': target['column_name'],
+                }
+
+                if 'clusters_number' in target:
+                    _target['numClusters'] = target['clusters_number']
+
+                targets.append(_target)
+
+            privileged_data_columns = []
+            for privileged_data in problem_input.get('privileged_data', []):
+                privileged_data_columns.append({
+                    'privilegedDataIndex': privileged_data['privileged_data_index'],
+                    'resID': privileged_data['resource_id'],
+                    'colIndex': privileged_data['column_index'],
+                    'colName': privileged_data['column_name'],
+                })
+
+            if problem_input.get('forecasting_horizon', {}).get('horizon_value', None):
+                _input['forecastingHorizon'] = {
+                    'resID': problem_input['forecasting_horizon']['resource_id'],
+                    'colIndex': problem_input['forecasting_horizon']['column_index'],
+                    'colName': problem_input['forecasting_horizon']['column_name'],
+                    'horizonValue': problem_input['forecasting_horizon']['horizon_value'],
+                }
+
+            if targets:
+                _input['targets'] = targets
+
+            if privileged_data_columns:
+                _input['privilegedData'] = privileged_data_columns
+
+            data.append(_input)
+
+        inputs = {
+            'performanceMetrics': performance_metrics,
+            'data': data
+        }
+
+        problem_doc = {
+            'about': about,
+            'inputs': inputs,
+        }
+
+        problem_description_path = problem_path / 'problemDoc.json'
+
+        with open(problem_description_path, 'x', encoding='utf8') as f:
+            json.dump(problem_doc, f, indent=2, allow_nan=False)
+
+
+# Expects uri: https://www.openml.org/t/{problem_id}
+OPENML_ID_REGEX = re.compile(r'^/t/(\d+)$')
+
+# TODO: Include mapping from OpenML
+# Tasks Types: https://www.openml.org/search?type=task_type
+# Metrics: https://www.openml.org/search?q=%2520measure_type%3Aevaluation_measure&type=measure
+
+
+class OpenMLTaskType(utils.Enum):
+    SUPERVISED_CLASSIFICATION = 1
+    SUPERVISED_REGRESSION = 2
+
+
+class OpenMLProblemLoader(Loader):
+    """
+    A class for loading OpenML problems.
+    """
+
+    def can_load(self, problem_uri: str) -> bool:
+        try:
+            parsed_uri = url_parse.urlparse(problem_uri, allow_fragments=False)
+        except Exception:
+            return False
+
+        if parsed_uri.scheme != 'https':
+            return False
+
+        if 'www.openml.org' != parsed_uri.netloc:
+            return False
+
+        parsed_uri_path = url_parse.unquote(parsed_uri.path)
+
+        if OPENML_ID_REGEX.search(parsed_uri_path) is None:
+            return False
+
+        return True
+
+    # "strict_digest" are ignored because there is no digest in OpenML problem descriptions.
+    # "handle_score_split" is ignored.
+    def load(self, problem_uri: str, *, problem_id: str = None, problem_version: str = None,
+             problem_name: str = None, strict_digest: bool = False, handle_score_split: bool = True) -> 'Problem':
+        assert self.can_load(problem_uri)
+
+        parsed_uri = url_parse.urlparse(problem_uri, allow_fragments=False)
+        parsed_uri_path = url_parse.unquote(parsed_uri.path)
+        task_id = int(OPENML_ID_REGEX.search(parsed_uri_path)[1])  # type: ignore
+
+        try:
+            response = requests.get(
+                "https://www.openml.org/api/v1/json/task/{task_id}".format(task_id=task_id)
+            )
+            response.raise_for_status()
+        except requests.HTTPError as error:
+            if error.response.status_code == 404:
+                raise exceptions.ProblemNotFoundError(
+                    "OpenML problem '{problem_uri}' cannot be found.".format(problem_uri=problem_uri),
+                ) from error
+            else:
+                raise error
+
+        openml_task = response.json()['task']
+
+        for field in openml_task['input']:
+            if field['name'] == 'source_data':
+                source_data = field['data_set']
+                break
+        else:
+            raise exceptions.NotFoundError("OpenML dataset reference could not be found.")
+
+        try:
+            response = requests.get(
+                'https://www.openml.org/api/v1/json/data/features/{dataset_id}'.format(
+                    dataset_id=source_data['data_set_id']
+                )
+            )
+            response.raise_for_status()
+        except requests.HTTPError as error:
+            if error.response.status_code == 404:
+                raise exceptions.DatasetNotFoundError(
+                    "OpenML dataset \"{dataset_id}\" cannot be found.".format(dataset_id=source_data['data_set_id']),
+                ) from error
+            else:
+                raise error
+
+        data_features = response.json()['data_features']['feature']
+
+        try:
+            response = requests.get(
+                'https://www.openml.org/d/{dataset_id}/json'.format(
+                    dataset_id=source_data['data_set_id']
+                )
+            )
+            response.raise_for_status()
+        except requests.HTTPError as error:
+            if error.response.status_code == 404:
+                raise exceptions.DatasetNotFoundError(
+                    "OpenML dataset \"{dataset_id}\" cannot be found.".format(dataset_id=source_data['data_set_id']),
+                ) from error
+            else:
+                raise error
+
+        # We use this as a workaround for additional metadata about a target column.
+        # See: https://github.com/openml/OpenML/issues/1085
+        data_features2 = response.json()['features']
+
+        target = None
+        has_index_column = False
+        for feature in data_features:
+            if feature['name'] == source_data['target_feature']:
+                target = feature
+
+            if 'is_row_identifier' in feature and feature['is_row_identifier'] == 'true':
+                has_index_column = True
+
+        if target is None:
+            raise exceptions.InvalidProblemError(
+                "Target column \"{target_column}\" not found in OpenML dataset \"{dataset_id}\".".format(
+                    target_column=source_data['target_feature'], dataset_id=source_data['data_set_id']
+                )
+            )
+
+        # We use this as a workaround for additional metadata about a target column.
+        # See: https://github.com/openml/OpenML/issues/1085
+        for feature in data_features2:
+            if feature['name'] == source_data['target_feature']:
+                target2 = feature
+                break
+        else:
+            raise exceptions.InvalidProblemError(
+                "Target column \"{target_column}\" not found in OpenML dataset \"{dataset_id}\".".format(
+                    target_column=source_data['target_feature'], dataset_id=source_data['data_set_id']
+                )
+            )
+
+        # Case when there is no index column on the dataset, we will be adding d3mIndex later.
+        target_column_index = int(target['index'])
+        if not has_index_column:
+            target_column_index += 1
+
+        inputs = [{
+            'dataset_id': 'openml_dataset_{dataset_id}'.format(dataset_id=source_data['data_set_id']),
+            'targets': [{
+                'target_index': 0,
+                'resource_id': 'learningData',
+                'column_index': target_column_index,
+                'column_name': source_data['target_feature'],
+            }]
+        }]
+
+        task_keywords = [TaskKeyword.TABULAR]
+        performance_metrics = []
+
+        if openml_task['task_type_id'] == str(OpenMLTaskType.SUPERVISED_CLASSIFICATION.value):
+            task_keywords.append(TaskKeyword.CLASSIFICATION)
+            performance_metrics.append({'metric': PerformanceMetric.ACCURACY})
+
+            # Sanity check
+            assert int(target2['distinct']) > 1
+
+            # We need to know if the task is binary or multiclass.
+            if int(target2['distinct']) > 2:
+                task_keywords.append(TaskKeyword.MULTICLASS)
+            else:
+                task_keywords.append(TaskKeyword.BINARY)
+
+        elif openml_task['task_type_id'] == str(OpenMLTaskType.SUPERVISED_REGRESSION.value):
+            performance_metrics.append({'metric': PerformanceMetric.MEAN_ABSOLUTE_ERROR})
+            task_keywords.append(TaskKeyword.REGRESSION)
+
+        else:
+            raise exceptions.NotSupportedError('Task {task_type} not supported for OpenMLProblemLoader'.format(
+                task_type=openml_task['task_type'])
+            )
+
+        problem = {
+            'performance_metrics': performance_metrics,
+            'task_keywords': sorted(set(task_keywords)),
+        }
+
+        description = {
+            'schema': PROBLEM_SCHEMA_VERSION,
+            'id': problem_id or 'openml_problem_{task_id}'.format(task_id=openml_task['task_id']),
+            'version': problem_version or '1.0',
+            'name': problem_name or openml_task['task_name'],
+            'location_uris': [problem_uri],
+            'source': {
+                'uris': [f"https://www.openml.org/t/{openml_task['task_id']}"],
+            },
+            'inputs': inputs,
+            'problem': problem,
+        }
+
+        if openml_task.get('tag', []):
+            if utils.is_sequence(openml_task['tag']):
+                description['keywords'] = openml_task['tag']
+            else:
+                description['keywords'] = [openml_task['tag']]
+
+        problem_class = self.get_problem_class()
+        return problem_class(description)
+
+
 P = typing.TypeVar('P', bound='Problem')
 
 
@@ -726,7 +1129,10 @@ class Problem(dict):
     """
 
     def __init__(self, problem_description: typing.Dict = None, *, strict_digest: bool = False) -> None:
-        super().__init__(problem_description)
+        if problem_description is not None:
+            super().__init__(problem_description)
+        else:
+            super().__init__()
 
         PROBLEM_SCHEMA_VALIDATOR.validate(self)
 
@@ -758,6 +1164,10 @@ class Problem(dict):
 
     loaders: typing.List[Loader] = [
         D3MProblemLoader(),
+        OpenMLProblemLoader(),
+    ]
+    savers: typing.List[Saver] = [
+        D3MProblemSaver(),
     ]
 
     @classmethod
@@ -799,6 +1209,23 @@ class Problem(dict):
             "No known loader could load problem from '{problem_uri}'.".format(problem_uri=problem_uri)
         )
 
+    def save(self, problem_uri: str) -> None:
+        """
+        Tries to save dataset to ``problem_uri`` using all registered problem savers.
+
+        Parameters
+        ----------
+        problem_uri:
+            A URI to save to.
+        """
+
+        for saver in self.savers:
+            if saver.can_save(problem_uri):
+                saver.save(self, problem_uri)
+                return
+
+        raise exceptions.ProblemUriNotSupportedError("No known saver could save problem to '{problem_uri}'.".format(problem_uri=problem_uri))
+
     # TODO: Allow one to specify priority which would then insert loader at a different place and not at the end?
     @classmethod
     def register_loader(cls, loader: Loader) -> None:
@@ -812,6 +1239,20 @@ class Problem(dict):
         """
 
         cls.loaders.append(loader)
+
+    # TODO: Allow one to specify priority which would then insert saver at a different place and not at the end?
+    @classmethod
+    def register_saver(cls, saver: Saver) -> None:
+        """
+        Registers a new dataset saver.
+
+        Parameters
+        ----------
+        saver:
+            An instance of the saver class implementing a new saver.
+        """
+
+        cls.savers.append(saver)
 
     def __repr__(self) -> str:
         return self.__str__()
@@ -940,10 +1381,14 @@ def parse_problem_description(problem_doc_path: str) -> Problem:
     A parsed problem.
     """
 
-    return Problem.load(problem_uri=utils.fix_uri(problem_doc_path))
+    return Problem.load(problem_uri=utils.path_to_uri(problem_doc_path))
 
 
 def problem_serializer(obj: Problem) -> dict:
+    """
+    Serializer to be used with PyArrow.
+    """
+
     data: typing.Dict = {
         'problem': dict(obj),
     }
@@ -955,16 +1400,12 @@ def problem_serializer(obj: Problem) -> dict:
 
 
 def problem_deserializer(data: dict) -> Problem:
+    """
+    Deserializer to be used with PyArrow.
+    """
+
     problem = data.get('type', Problem)(data['problem'])
     return problem
-
-
-if pyarrow_lib is not None:
-    pyarrow_lib._default_serialization_context.register_type(
-        Problem, 'd3m.problem',
-        custom_serializer=problem_serializer,
-        custom_deserializer=problem_deserializer,
-    )
 
 
 def get_problem(problem_uri: str, *, strict_digest: bool = False, datasets_dir: str = None, handle_score_split: bool = True) -> Problem:
@@ -974,7 +1415,7 @@ def get_problem(problem_uri: str, *, strict_digest: bool = False, datasets_dir: 
         if problem_uri in problem_descriptions:
             problem_uri = problem_descriptions[problem_uri]
 
-    problem_uri = utils.fix_uri(problem_uri)
+    problem_uri = utils.path_to_uri(problem_uri)
 
     return Problem.load(problem_uri, strict_digest=strict_digest)
 
@@ -1016,7 +1457,7 @@ def describe_handler(
                     indent=(getattr(arguments, 'indent', 2) or None),
                     sort_keys=getattr(arguments, 'sort_keys', False),
                     allow_nan=False,
-                )  # type: ignore
+                )
                 output_stream.write('\n')
         except Exception as error:
             if getattr(arguments, 'continue', False):
@@ -1029,6 +1470,23 @@ def describe_handler(
 
     if has_errored:
         sys.exit(1)
+
+
+def convert_handler(arguments: argparse.Namespace, *, problem_resolver: typing.Callable = None) -> None:
+    if problem_resolver is None:
+        problem_resolver = get_problem
+
+    try:
+        problem = problem_resolver(arguments.input_uri, strict_digest=getattr(arguments, 'strict_digest', False))
+    except Exception as error:
+        raise Exception(f"Error loading problem '{arguments.input_uri}'.") from error
+
+    output_uri = utils.path_to_uri(arguments.output_uri)
+
+    try:
+        problem.save(output_uri)
+    except Exception as error:
+        raise Exception(f"Error saving problem '{arguments.input_uri}' to '{output_uri}'.") from error
 
 
 def main(argv: typing.Sequence) -> None:

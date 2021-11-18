@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema",
-  "id": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline_run.json",
+  "$id": "https://metadata.datadrivendiscovery.org/schemas/v0/pipeline_run.json",
   "title": "Pipeline run description",
   "description": "Schema for a description of one run of a pipeline. Pipeline outputs and scores are recorded. It includes references to input dataset(s), a problem, and a pipeline.",
   "type": "object",

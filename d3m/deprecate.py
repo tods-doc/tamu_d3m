@@ -1,6 +1,7 @@
 import functools
 import logging
 import sys
+import types
 import typing
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def function(message: str = None) -> typing.Callable:
 
         @functools.wraps(f)
         def wrapper(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
-            frame = sys._getframe(1)
+            frame: typing.Optional[types.FrameType] = sys._getframe(1)
             try:
                 while frame:
                     # If function has multiple decorators, skip decorators as callers and find the real caller.
@@ -85,7 +86,7 @@ def arguments(*deprecated_arguments: str, message: str = None) -> typing.Callabl
         def wrapper(*args: typing.Any, **kwargs: typing.Any) -> typing.Any:
             for argument in deprecated_arguments:
                 if argument in kwargs:
-                    frame = sys._getframe(1)
+                    frame: typing.Optional[types.FrameType] = sys._getframe(1)
                     try:
                         while frame:
                             # If function has multiple decorators, skip decorators as callers and find the real caller.

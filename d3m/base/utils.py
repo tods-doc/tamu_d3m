@@ -2,8 +2,13 @@ import collections
 import copy
 import logging
 import typing
+import pathlib
+from urllib import parse as url_parse
 
-from d3m import container, exceptions
+import pandas
+import numpy
+
+from d3m import container, exceptions, utils
 from d3m.metadata import base as metadata_base
 
 logger = logging.getLogger(__name__)
@@ -94,28 +99,51 @@ def combine_columns(
         if not column_indices:
             return combine_columns(inputs, column_indices, columns_list, return_result='append', add_index_columns=add_index_columns)
 
-        # We copy here and disable copying inside "replace_columns" to copy only once.
-        # We have to copy because "replace_columns" is modifying data in-place.
-        outputs = copy.copy(inputs)
-
+        # Compute the difference in "columns"
+        to_be_added = list(numpy.setdiff1d(numpy.arange(len(inputs.columns)), column_indices))
         columns_replaced = 0
-        for columns in columns_list:
-            columns_length = columns.shape[1]
+        if len(to_be_added) < len(column_indices):
+            # More efficient to concatenate than replace one-by-one
+            outputs = pandas.concat(columns_list, axis=1)
+            outputs = container.DataFrame(data=outputs, generate_metadata=False)
+            indices = range(columns_list[0].shape[1])
+            outputs.metadata = inputs.metadata.select_columns(columns=list(indices))
+
+            c = 0
+            for columns in columns_list:
+                columns_length = columns.shape[1]
+                if c == 0:
+                    outputs.metadata = outputs.metadata.replace_columns(columns.metadata, list(indices))
+                else:
+                    outputs.metadata = outputs.metadata.append_columns(columns.metadata)
+                c += 1
+
+            for col in to_be_added:
+                insert_index = col.item()
+                if insert_index > outputs.shape[1]:
+                    insert_index = outputs.shape[1]
+                outputs = outputs.insert_columns(inputs.select_columns([col.item()]), insert_index)
+            outputs.metadata = outputs.metadata.compact(['structural_type'])
+        else:
+            # We copy here and disable copying inside "replace_columns" to copy only once.
+            # We have to copy because "replace_columns" is modifying data in-place.
+            outputs = copy.copy(inputs)
+            for columns in columns_list:
+                columns_length = columns.shape[1]
+                if columns_replaced < len(column_indices):
+                    # It is OK if the slice of "column_indices" is shorter than "columns", Only those columns
+                    # listed in the slice will be replaced and others appended after the last replaced column.
+                    outputs = outputs.replace_columns(columns, column_indices[columns_replaced:columns_replaced + columns_length], copy=False)
+                else:
+                    # We insert the rest of columns after the last columns we replaced. We know that "column_indices"
+                    # is non-empty and that the last item of "column_indices" points ot the last column we replaced
+                    # for those listed in "column_indices". We replaced more columns though, so we have to add the
+                    # difference, and then add 1 to insert after the last column.
+                    outputs = outputs.insert_columns(columns, column_indices[-1] + (columns_replaced - len(column_indices)) + 1)
+                columns_replaced += columns_length
+
             if columns_replaced < len(column_indices):
-                # It is OK if the slice of "column_indices" is shorter than "columns", Only those columns
-                # listed in the slice will be replaced and others appended after the last replaced column.
-                outputs = outputs.replace_columns(columns, column_indices[columns_replaced:columns_replaced + columns_length], copy=False)
-            else:
-                # We insert the rest of columns after the last columns we replaced. We know that "column_indices"
-                # is non-empty and that the last item of "column_indices" points ot the last column we replaced
-                # for those listed in "column_indices". We replaced more columns though, so we have to add the
-                # difference, and then add 1 to insert after the last column.
-                outputs = outputs.insert_columns(columns, column_indices[-1] + (columns_replaced - len(column_indices)) + 1)
-            columns_replaced += columns_length
-
-        if columns_replaced < len(column_indices):
-            outputs = outputs.remove_columns(column_indices[columns_replaced:len(column_indices)])
-
+                outputs = outputs.remove_columns(column_indices[columns_replaced:len(column_indices)])
     elif return_result == 'new':
         if not any(columns.shape[1] for columns in columns_list):
             raise ValueError("No columns produced.")
@@ -340,3 +368,17 @@ def sample_rows(
     row_indices_to_keep = {resource_id: sorted(indices) for resource_id, indices in row_indices_to_keep_sets.items()}
 
     return dataset.select_rows(row_indices_to_keep)
+
+
+def construct_file_uri(location_base_uris: typing.Sequence[str], filename: str) -> str:
+    """
+    Construct the file URI given ``location_base_uris`` values and a ``filename`` (which should be
+    in POSIX format). Generally, ``filename`` comes from the column of a collection resource.
+    """
+
+    # TODO: Support handling multiple "location_base_uris".
+    location_base_uri = location_base_uris[0]
+    # "location_base_uris" should be made so that we can just concat with the filename
+    # ("location_base_uris" end with "/"), but we make sure it is so.
+    location_base_uri = utils.ensure_uri_ends_with_slash(location_base_uri)
+    return location_base_uri + url_parse.quote_from_bytes(bytes(pathlib.PurePosixPath(filename)))
