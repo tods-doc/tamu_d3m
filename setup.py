@@ -15,7 +15,7 @@ def check_python_version():
 
 def read_package_variable(key):
     """Read the value of a variable from the package without importing."""
-    module_path = os.path.join(PACKAGE_NAME, '__init__.py')
+    module_path = os.path.join('d3m', '__init__.py')
     with open(module_path) as module:
         for line in module:
             parts = line.strip().split(' ')
@@ -77,7 +77,7 @@ setup(
         ],
     },
     entry_points=read_entry_points(),
-    url='https://gitlab.com/datadrivendiscovery/d3m',
+    url='https://github.com/tods-doc/tamu_d3m',
     long_description=read_readme(),
     long_description_content_type='text/markdown',
     license='Apache-2.0',
