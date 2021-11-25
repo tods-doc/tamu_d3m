@@ -48,7 +48,7 @@ setup(
     package_data={PACKAGE_NAME: ['metadata/schemas/*/*.json', 'contrib/pipelines/*.yml', 'py.typed']},
     install_requires=[
         'scikit-learn>=0.21.3,<=0.24.2',
-        'pytypes @ git+https://github.com/Stewori/pytypes.git@121f9c34dbd68a1743ef780b0058ffabde790ee3',
+        'pytypes>=1.0b5',
         'frozendict==1.2',
         'numpy>=1.16.6,<=1.21.2',
         'jsonschema>=3.0.2,<=4.0.1',
