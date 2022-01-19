@@ -46,6 +46,7 @@ setup(
     author=author,
     packages=find_packages(exclude=['contrib', 'docs', 'site', 'tests*']),
     package_data={PACKAGE_NAME: ['metadata/schemas/*/*.json', 'contrib/pipelines/*.yml', 'py.typed']},
+    include_package_data=True,
     install_requires=[
         'scikit-learn>=0.21.3,<=0.24.2',
         'pytypes>=1.0b5',
