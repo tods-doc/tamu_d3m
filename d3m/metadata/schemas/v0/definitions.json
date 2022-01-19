@@ -2597,6 +2597,7 @@
               {"enum": ["MULTIGRAPH"]},
               {"enum": ["TIME_SERIES"]},
               {"enum": ["GROUPED"]},
+              {"enum": ["ANOMALY_DETECTION"]},
               {"enum": ["GEOSPATIAL"]},
               {"enum": ["REMOTE_SENSING"], "description":  "https://en.wikipedia.org/wiki/Remote_sensing"},
               {"enum": ["LUPI"]},
