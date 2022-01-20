@@ -45,8 +45,10 @@ setup(
     description=description,
     author=author,
     packages=find_packages(exclude=['contrib', 'docs', 'site', 'tests*']),
-    package_data={PACKAGE_NAME: ['metadata/schemas/*/*.json', 'contrib/pipelines/*.yml', 'py.typed']},
     include_package_data=True,
+    package_data={PACKAGE_NAME: ["metadata/schemas/*/*.json", "contrib/pipelines/*.yml", "py.typed"], "d3m": ["metadata/schemas/*/*.json", "contrib/pipelines/*.yml", "py.typed"]},
+#    package_data={PACKAGE_NAME: ["metadata/schemas/*/*.json", "py.typed", "contrib/pipelines/3c11d171-e2ad-4d26-a034-04f3b062306c.yml", "contrib/pipelines/79ce71bd-db96-494b-a455-14f2e2ac5040.yml", "contrib/pipelines/9c18472e-fff7-4129-93f6-1ab996e82adb.yml", "contrib/pipelines/c8ed65df-aa68-4ee0-bbb5-c5f76a40bcf8.yml","contrib/pipelines/f596cd77-25f8-4d4c-a350-bb30ab1e58f6.yml"]},
+
     install_requires=[
         'scikit-learn>=0.21.3,<=0.24.2',
         'pytypes>=1.0b5',
