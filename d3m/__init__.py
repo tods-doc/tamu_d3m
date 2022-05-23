@@ -1,6 +1,6 @@
 # Use date-based versioning, year.month.date, without leading zeros
 # For the development branch, use *the day after* the last release with a `.dev0` suffix, for example 2019.2.13.dev0
-__version__ = '2022.01.21'
+__version__ = '2022.05.23'
 
 __description__ = 'Common code for D3M project'
 

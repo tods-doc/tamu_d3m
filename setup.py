@@ -59,7 +59,7 @@ setup(
         'rfc3339-validator>=0.1,<0.2',
         'rfc3986-validator>=0.1,<0.2',
         'webcolors>=1.8.1,<=1.11.1',
-        'dateparser>=0.7.0,<=1.1.0',
+        'dateparser>=0.7.0,<1.2.0',
         'python-dateutil>=2.8.1,<=2.8.2',
         'pandas>=1.1.3,<=1.3.4',
         'typing-inspect==0.7.1',
